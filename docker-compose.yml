@@ -1,0 +1,67 @@
+# Catatan penting sebelum `docker compose up`:
+#
+# choros menjalankan CLI langganan (claude, agy) sebagai subprocess. CLI itu
+# login sekali di mesin kamu dan menyimpan kredensialnya di HOME. Karena choros
+# TIDAK menyimpan atau me-replay kredensial langganan (PRD §4), container harus
+# memakai HOME yang sama — bukan menyalin kredensialnya ke dalam image.
+#
+# Untuk pemakaian sehari-hari di satu mesin, menjalankan choros langsung lewat
+# systemd (lihat deploy/choros.service) lebih sederhana dan lebih jujur secara
+# arsitektur. Compose di sini berguna untuk PostgreSQL + Nginx, dan untuk
+# menjalankan backend kalau CLI-nya memang sudah terpasang di dalam image.
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: choros
+      POSTGRES_PASSWORD: choros
+      POSTGRES_DB: choros
+    volumes:
+      - choros_pg:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U choros"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  app:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      CHOROS_DATABASE_URL: postgresql+asyncpg://choros:choros@db:5432/choros
+      CHOROS_SECRET_KEY: ${CHOROS_SECRET_KEY:?set CHOROS_SECRET_KEY di .env}
+      CHOROS_ADMIN_USERNAME: ${CHOROS_ADMIN_USERNAME:-admin}
+      CHOROS_ADMIN_PASSWORD_HASH: ${CHOROS_ADMIN_PASSWORD_HASH:-}
+      CHOROS_DEFAULT_PROJECT_PATH: ${CHOROS_DEFAULT_PROJECT_PATH:-/workspace}
+      CHOROS_ISOLATION_ROOT: /worktrees
+    volumes:
+      # project yang dikerjakan agent
+      - ${CHOROS_DEFAULT_PROJECT_PATH:-./}:/workspace
+      # kredensial CLI langganan: dipakai di tempat, tidak pernah disalin/di-replay
+      - ${HOME}/.claude.json:/root/.claude.json
+      - ${HOME}/.claude:/root/.claude
+      - ${HOME}/.gemini:/root/.gemini
+      - choros_worktrees:/worktrees
+    ports:
+      - "127.0.0.1:8000:8000"
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    depends_on:
+      - app
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "127.0.0.1:8080:80"
+    restart: unless-stopped
+
+volumes:
+  choros_pg:
+  choros_worktrees:

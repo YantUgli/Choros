@@ -1,0 +1,24 @@
+# Jalankan sebagai user biasa (bukan root): harness agent memakai login
+# langganan yang tersimpan di HOME user tersebut.
+#
+#   mkdir -p ~/.config/systemd/user
+#   cp deploy/choros.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now choros
+#   systemctl --user status choros
+#
+# Supaya tetap jalan tanpa sesi login aktif: sudo loginctl enable-linger $USER
+
+[Unit]
+Description=choros — orchestrator langganan coding-agent
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/bryant_folder/machine_learning/Choros
+EnvironmentFile=%h/bryant_folder/machine_learning/Choros/.env
+ExecStart=%h/bryant_folder/machine_learning/Choros/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

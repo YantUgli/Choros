@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>choros — meja kendali coding agent</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">χ</span>
+      <div>
+        <h1>choros</h1>
+        <p class="tagline">satu meja kendali, beberapa agent — lewat pintu resmi tiap layanan</p>
+      </div>
+    </div>
+    <nav class="tabs">
+      <button class="tab active" data-view="run">Tugas</button>
+      <button class="tab" data-view="agents">Agent</button>
+      <button class="tab" data-view="routing">Routing</button>
+      <button class="tab" data-view="quota">Kuota</button>
+    </nav>
+  </header>
+
+  <div id="banner" class="banner hidden"></div>
+
+  <main>
+    <!-- ============ TUGAS ============ -->
+    <section id="view-run" class="view active">
+      <div class="split">
+        <div class="panel compose">
+          <h2>Kirim tugas</h2>
+          <label>Prompt
+            <textarea id="prompt" rows="7" placeholder="Contoh: refactor modul auth supaya token disimpan di httponly cookie…"></textarea>
+          </label>
+          <div class="row">
+            <label>Kategori
+              <select id="category"></select>
+            </label>
+            <label>Mode
+              <select id="mode">
+                <option value="interactive">Interaktif (aman)</option>
+                <option value="autonomous">Otonom (skip-permission)</option>
+              </select>
+            </label>
+          </div>
+          <label>Project path
+            <input id="project_path" placeholder="kosongkan = pakai default" />
+          </label>
+          <div class="row">
+            <label>Batas bawah mutu
+              <select id="quality_floor">
+                <option value="">— tanpa batas —</option>
+                <option value="frontier">frontier</option>
+                <option value="strong">strong</option>
+                <option value="mid">mid</option>
+                <option value="light">light</option>
+              </select>
+            </label>
+            <label class="check" title="Mode otonom butuh repo git untuk worktree terisolasi">
+              <input type="checkbox" id="allow_unisolated" />
+              <span>izinkan otonom tanpa isolasi</span>
+            </label>
+          </div>
+          <details>
+            <summary>Artefak plan (titik-ulang saat fallback)</summary>
+            <textarea id="plan_artifact" rows="5" placeholder="Plan self-contained: file mana, perubahan per file, urutan, kriteria selesai. Dipakai kalau target pertama mentok di tengah jalan."></textarea>
+          </details>
+          <div class="actions">
+            <button id="submit" class="primary">Jalankan</button>
+            <button id="cancel" class="ghost" disabled>Batalkan</button>
+          </div>
+
+          <h3>Riwayat</h3>
+          <ul id="task-list" class="task-list"></ul>
+        </div>
+
+        <div class="panel console-wrap">
+          <div class="console-head">
+            <h2>Live console</h2>
+            <div class="console-meta">
+              <span id="task-status" class="pill">idle</span>
+              <label class="check tiny"><input type="checkbox" id="show-thinking" checked /><span>thinking</span></label>
+              <button id="clear-console" class="ghost tiny">bersihkan</button>
+            </div>
+          </div>
+          <div id="console" class="console"></div>
+          <div id="result-panel" class="result hidden">
+            <h3>Hasil</h3>
+            <pre id="result-text"></pre>
+            <div class="followup">
+              <input id="followup" placeholder="Tanya balik / lanjutkan di sesi yang sama…" />
+              <button id="send-followup" class="primary">Kirim</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ AGENT ============ -->
+    <section id="view-agents" class="view">
+      <div class="panel">
+        <h2>Agent</h2>
+        <p class="note">
+          Aturan ToS (PRD §3): langganan <strong>Claude</strong> dan <strong>Antigravity</strong> hanya boleh lewat harness resminya sendiri.
+          API key milikmu (Groq/Together/Ollama) dipakai lewat opencode untuk coding, atau adapter OpenAI-compatible untuk tugas teks.
+        </p>
+        <form id="agent-form" class="grid-form">
+          <input type="hidden" id="agent-id" />
+          <label>Nama<input id="agent-name" required placeholder="claude" /></label>
+          <label>Adapter
+            <select id="agent-adapter">
+              <option value="claude_code">claude_code (langganan Claude)</option>
+              <option value="antigravity">antigravity (langganan AG)</option>
+              <option value="opencode">opencode (harness generik, API key)</option>
+              <option value="openai_compatible">openai_compatible (otak saja)</option>
+            </select>
+          </label>
+          <label>Model default<input id="agent-model" placeholder="sonnet / groq/llama-3.3-70b" /></label>
+          <label>Base URL<input id="agent-baseurl" placeholder="hanya untuk openai_compatible" /></label>
+          <label class="wide">Config (JSON)
+            <textarea id="agent-config" rows="3" placeholder='{"api_key_env": "GROQ_API_KEY"}'></textarea>
+          </label>
+          <div class="actions wide">
+            <button type="submit" class="primary">Simpan</button>
+            <button type="button" id="agent-reset" class="ghost">Baru</button>
+          </div>
+        </form>
+        <table id="agent-table" class="table"></table>
+      </div>
+    </section>
+
+    <!-- ============ ROUTING ============ -->
+    <section id="view-routing" class="view">
+      <div class="panel">
+        <h2>Routing</h2>
+        <p class="note">Urutan pemakaian target kamu yang tentukan sendiri lewat <em>priority</em> — angka kecil dicoba lebih dulu. Target spesifik sampai level (agent, model).</p>
+        <form id="routing-form" class="grid-form">
+          <input type="hidden" id="rule-id" />
+          <label>Kategori<select id="rule-category"></select></label>
+          <label>Agent<select id="rule-agent"></select></label>
+          <label>Model<input id="rule-model" placeholder="kosong = model default agent" /></label>
+          <label>Priority<input id="rule-priority" type="number" value="100" /></label>
+          <div class="actions wide">
+            <button type="submit" class="primary">Simpan</button>
+            <button type="button" id="rule-reset" class="ghost">Baru</button>
+          </div>
+        </form>
+        <div id="routing-groups"></div>
+      </div>
+    </section>
+
+    <!-- ============ KUOTA ============ -->
+    <section id="view-quota" class="view">
+      <div class="panel">
+        <h2>Kuota &amp; konsumsi</h2>
+        <p class="note">
+          Langganan tidak mengekspos "sisa X pesan". Yang ditampilkan di sini: konsumsi yang tercatat lewat choros
+          dan status mentok yang terdeteksi dari 429 — bukan tebakan sisa kuota.
+        </p>
+        <h3>Window aktif</h3>
+        <table id="quota-table" class="table"></table>
+        <h3>Konsumsi 7 hari terakhir</h3>
+        <table id="usage-table" class="table"></table>
+      </div>
+    </section>
+  </main>
+
+  <div id="login-modal" class="modal hidden">
+    <form class="modal-box" id="login-form">
+      <h2>Masuk</h2>
+      <label>Username<input id="login-user" autocomplete="username" /></label>
+      <label>Password<input id="login-pass" type="password" autocomplete="current-password" /></label>
+      <p id="login-error" class="error"></p>
+      <button class="primary" type="submit">Masuk</button>
+    </form>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
