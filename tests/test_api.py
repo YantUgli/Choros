@@ -558,24 +558,55 @@ async def test_c3_auth_status_no_cookie(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_c4_auth_status_contract(monkeypatch):
-    """C4: Body /api/auth/status memuat ketiga kunci auth_required, username, is_admin"""
+    """C4: /api/auth/status memuat SEMUA kunci yang dibaca app.js.
+
+    Penjaga terhadap kelas bug yang sudah terjadi tiga kali di project ini
+    (A1-A6 Fase 4, H1 Fase 5b, panel kredensial Fase 5c): UI membaca field
+    yang tidak pernah dikirim API, tanpa error, fiturnya mati diam-diam.
+
+    Kalau app.js mulai membaca field baru dari endpoint ini, tambahkan di sini.
+    """
     from app.config import get_settings
     from app.security import hash_password
-    
+
+    # app.js:965 auth_required, :971 username, :977 is_admin, :414 credential_home
+    KUNCI_DIBACA_UI = {"auth_required", "username", "is_admin", "credential_home"}
+
     monkeypatch.setenv("CHOROS_ADMIN_PASSWORD_HASH", hash_password("adminpass"))
     get_settings.cache_clear()
-    
+
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             res = await client.get("/api/auth/status")
             assert res.status_code == 200
             data = res.json()
-            keys = list(data.keys())
-            assert "auth_required" in keys
-            assert "username" in keys
-            assert "is_admin" in keys
+            hilang = KUNCI_DIBACA_UI - set(data)
+            assert not hilang, f"app.js membaca kunci yang tidak dikirim API: {hilang}"
     finally:
         get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_d8_auth_status_returns_credential_home():
+    """D8: credential_home user yang login benar-benar terkirim, bukan None."""
+    from app.security import COOKIE_NAME, hash_password, issue_cookie
+
+    async with SessionLocal() as session:
+        session.add(
+            User(
+                username="home_guy",
+                password_hash=hash_password("p"),
+                credential_home="/home/choros/home_guy",
+            )
+        )
+        await session.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        client.cookies.set(COOKIE_NAME, issue_cookie("home_guy"))
+        data = (await client.get("/api/auth/status")).json()
+
+    assert data["username"] == "home_guy"
+    assert data["credential_home"] == "/home/choros/home_guy"
 
 
 @pytest.mark.asyncio

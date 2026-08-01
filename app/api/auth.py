@@ -36,16 +36,22 @@ async def auth_status(
             username = read_cookie(token)
 
     is_admin = False
+    credential_home = None
     if username:
         row = (
             await session.execute(select(User).where(User.username == username))
         ).scalar_one_or_none()
         is_admin = bool(row and row.is_admin)
+        credential_home = row.credential_home if row else None
 
+    # Empat kunci ini adalah kontrak dengan app.js (boot() + panel panduan
+    # login). Menambah pembacaan di sisi UI tanpa menambahkannya di sini
+    # menghasilkan fitur yang mati diam-diam — sudah terjadi tiga kali.
     return {
         "auth_required": not is_disabled,
         "username": username,
         "is_admin": is_admin,
+        "credential_home": credential_home,
     }
 
 
