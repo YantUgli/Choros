@@ -80,7 +80,6 @@ async def make_agent(user):
             )
             session.add(agent)
             await session.commit()
-            await session.refresh(agent)
             return agent
 
     return _make
@@ -95,7 +94,6 @@ async def make_route():
             )
             session.add(rule)
             await session.commit()
-            await session.refresh(rule)
             return rule
 
     return _make

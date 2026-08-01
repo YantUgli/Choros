@@ -13,6 +13,7 @@ from app.models import (
     WorkflowRun,
     WorkflowStep,
 )
+from app.security import get_current_user
 
 
 @pytest.mark.asyncio
