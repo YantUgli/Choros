@@ -120,11 +120,30 @@ hasil, bukan mengulanginya di log.
 
 ## 3. Yang belum dikerjakan
 
-- **Fase 4 (workflow lintas-provider)** — tabel `workflows`/`workflow_steps` ada,
-  API dan runner multi-step belum. PRD menandainya opsional dan bukan default.
-- **Fase 5 (mode tim)** — semua query sudah tersaring `user_id` dan boundary
-  kepemilikan ditegakkan di API, tapi isolasi credential store per-user (container
-  per user) belum ada. Jangan pakai multi-user sebelum itu.
+*Diperbarui 1 Agustus 2026, setelah Fase 4 ditutup dan Fase 5a dikerjakan.*
+
+- **Fase 4 (workflow lintas-provider)** — **selesai.** API CRUD, runner
+  multi-step, artefak handoff, dan checkpoint approval sudah jalan (`3f74978`
+  beserta rangkaian penutupannya). Yang masih menganggur hanya verifikasi manual
+  lewat browser, `rencana-penutupan-fase4.md` §6.
+- **Fase 5 (mode tim)** — belum. Isolasi credential store per-user belum ada:
+  `adapters/base.py` mewariskan `os.environ` apa adanya ke subprocess, jadi
+  semua tugas milik semua user memakai `HOME` — dan karenanya kredensial
+  langganan — yang sama.
+
+  **Koreksi terhadap versi sebelumnya dokumen ini.** Kalimat "semua query sudah
+  tersaring `user_id`" salah, dan bertahan lima fase. Boundary memang ditegakkan
+  di lapisan API, tapi runner memakai jalur query terpisah yang tidak menyaring
+  pemilik sama sekali: `resolve_targets` menjoin `routing_rules → agents` tanpa
+  filter pemilik, dan runner memanggilnya tanpa identitas. Akibatnya tugas user A
+  dirutekan ke agent user B — pooling, yang PRD §1 daftarkan sebagai non-tujuan
+  eksplisit. Ditutup di Fase 5a (`c096cbb`); rinciannya di `rencana-fase5.md` §2.
+
+  Yang perlu diingat bukan "ada bug", melainkan **dari mana klaim status itu
+  ditulis**: dari membaca lapisan API saja. `GET /api/routing` memang menyaring
+  dengan benar, jadi dashboard tidak pernah membocorkan apa pun — dan lapisan
+  yang benar-benar mengeksekusi tidak pernah diperiksa, tanpa satu pun test
+  menembusnya. Jangan pakai multi-user sebelum 5b–5c selesai.
 - **Klasifikasi LLM (PRD §5 v2)** — masih dropdown + keyword.
 - **`ensure_trusted` untuk opencode** — opencode tidak punya konsep trust folder;
   izin ditangani per-run lewat `--auto`, sengaja tidak menulis permission wildcard
