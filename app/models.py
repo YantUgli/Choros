@@ -78,6 +78,29 @@ class WorkflowStep(Base):
     targets: Mapped[list[Any]] = mapped_column(JSONB, default=list)
     quality_floor: Mapped[str | None] = mapped_column(String(64), nullable=True)
     requires_approval: Mapped[bool] = mapped_column(Boolean, default=False)
+    category: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
+class WorkflowRun(Base):
+    __tablename__ = "workflow_runs"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    workflow_id: Mapped[int] = mapped_column(ForeignKey("workflows.id"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    goal: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(32), default="queued")
+    current_step: Mapped[int] = mapped_column(Integer, default=0)
+    project_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    workspace_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mode: Mapped[str] = mapped_column(String(16), default="interactive")
+    allow_unisolated: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class Task(Base):
@@ -90,7 +113,7 @@ class Task(Base):
     mode: Mapped[str] = mapped_column(String(16), default="interactive")
     project_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     quality_floor: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    status: Mapped[str] = mapped_column(String(16), default="queued")
+    status: Mapped[str] = mapped_column(String(32), default="queued")
     plan_artifact: Mapped[str | None] = mapped_column(Text, nullable=True)
     final_output: Mapped[str | None] = mapped_column(Text, nullable=True)
     workspace_path: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -101,6 +124,11 @@ class Task(Base):
     pinned_agent_id: Mapped[int | None] = mapped_column(
         ForeignKey("agents.id"), nullable=True
     )
+    workflow_run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("workflow_runs.id"), nullable=True
+    )
+    step_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    owns_workspace: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

@@ -162,6 +162,46 @@ details summary { cursor: pointer; color: var(--muted); font-size: 12px; margin-
   background: rgba(224,175,104,.12); border: 1px solid var(--warn); color: var(--warn); font-size: 12.5px;
 }
 
+.worktree-panel, .attempts-panel { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 12px; }
+.diff-box {
+  margin-top: 8px; background: #0b0d11; border: 1px solid var(--line); border-radius: 8px;
+  padding: 12px; max-height: 30vh; overflow: auto; white-space: pre-wrap;
+  font-family: var(--mono); font-size: 12px; color: var(--text);
+}
+
+/* ---------- workflow ---------- */
+.workflow-list { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.workflow-card {
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--panel-2); display: flex; justify-content: space-between; align-items: center;
+}
+.workflow-card:hover { border-color: var(--accent); }
+.workflow-card .title { font-weight: 500; font-size: 13px; }
+.workflow-card .actions { margin: 0; }
+
+.workflow-editor { display: flex; flex-direction: column; gap: 12px; margin-bottom: 12px; }
+.workflow-editor .step-form {
+  padding: 12px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--panel-2); position: relative;
+}
+.workflow-editor .step-form .remove-step { position: absolute; top: 12px; right: 12px; }
+
+.step-list { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
+.step-item {
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--panel-2); display: flex; justify-content: space-between; align-items: center;
+  cursor: pointer;
+}
+.step-item:hover { border-color: var(--accent); }
+.step-item.completed, .step-item.ok { border-left: 3px solid var(--ok); }
+.step-item.running { border-left: 3px solid var(--warn); }
+.step-item.pending { border-left: 3px solid var(--muted); opacity: 0.7; }
+.step-item.failed, .step-item.halted, .step-item.error { border-left: 3px solid var(--err); }
+.step-item.paused, .step-item.awaiting_approval { border-left: 3px solid var(--accent); }
+.pill.awaiting_approval { border-color: var(--accent); color: var(--accent); }
+
+.approval-panel { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 16px; }
+
 .modal { position: fixed; inset: 0; background: rgba(0,0,0,.7); display: grid; place-items: center; z-index: 50; }
 .modal-box { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 24px; width: min(360px, 90vw); }
 .error { color: var(--err); font-size: 12px; min-height: 16px; margin: 4px 0; }

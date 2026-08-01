@@ -139,13 +139,16 @@ async def test_rate_limit_sets_cooldown_window(user, make_agent, make_route, tmp
     )
 
     async with SessionLocal() as session:
-        windows = list(
-            (await session.execute(select(QuotaWindow).where(QuotaWindow.agent_id == primary.id))).scalars()
-        )
-    assert len(windows) == 1
-    assert windows[0].is_exhausted is True
+        cooldown = (
+            await session.execute(
+                select(QuotaWindow).where(
+                    QuotaWindow.agent_id == primary.id, QuotaWindow.window_type == "cooldown"
+                )
+            )
+        ).scalar_one()
+    assert cooldown.is_exhausted is True
     # retry_after 120 detik dari adapter dipakai sebagai cooldown
-    assert (windows[0].window_end - windows[0].window_start).total_seconds() == pytest.approx(120, abs=5)
+    assert (cooldown.window_end - cooldown.window_start).total_seconds() == pytest.approx(120, abs=5)
 
 
 async def test_exhausted_target_is_skipped_without_running(user, make_agent, make_route, tmp_path):
@@ -260,7 +263,11 @@ async def test_usage_recorded_even_when_attempt_fails(user, make_agent, make_rou
     assert entries[0].usage["total_tokens"] == 150
     async with SessionLocal() as session:
         window = (
-            await session.execute(select(QuotaWindow).where(QuotaWindow.agent_id == primary.id))
+            await session.execute(
+                select(QuotaWindow).where(
+                    QuotaWindow.agent_id == primary.id, QuotaWindow.window_type != "cooldown"
+                )
+            )
         ).scalar_one()
     assert window.tokens_used == 150
 
@@ -288,3 +295,37 @@ async def test_partial_events_are_not_persisted(user, make_agent, make_route, tm
     stored = await events_for(task.id)
     assert stored, "event non-partial harus tersimpan untuk replay"
     assert all(not e.data.get("partial") for e in stored)
+
+
+async def test_run_cascade_returns_none_when_targets_exhausted(user, make_agent, make_route, tmp_path):
+    """T10: _run_cascade mengembalikan attempt=None saat semua target habis, dan TIDAK menyentuh status task."""
+    a = await make_agent("a", behaviour="rate_limit")
+    await make_route("coding_complex", a, priority=10)
+
+    async with SessionLocal() as session:
+        task = Task(user_id=user.id, prompt="test prompt", category="coding_complex", status="queued", project_path=str(tmp_path))
+        session.add(task)
+        await session.commit()
+        await session.refresh(task)
+        task_id = task.id
+
+    targets = [runner_module.Target(agent=a, model=a.default_model, priority=10)]
+    from app.orchestrator.isolation import Workspace
+    ws = Workspace(path=str(tmp_path), isolated=False)
+    ctx = runner_module.RunContext(
+        task_id=task_id,
+        user_id=user.id,
+        category="coding_complex",
+        mode="interactive",
+        permission_mode="safe",
+        workspace=ws,
+    )
+
+    result = await runner._run_cascade(ctx, targets=targets, prompt="test prompt", quality_floor=None)
+    assert result.attempt is None
+
+    # Status task di DB harus TETAP queued (karena _run_cascade tidak memanggil _finish)
+    async with SessionLocal() as session:
+        db_task = await session.get(Task, task_id)
+        assert db_task.status == "queued"
+

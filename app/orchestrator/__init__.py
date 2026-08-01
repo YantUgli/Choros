@@ -1,5 +1,10 @@
 from app.orchestrator.bus import bus
-from app.orchestrator.router import CATEGORIES, CATEGORY_LABELS, classify, resolve_targets
+from app.orchestrator.router import (
+    CATEGORIES,
+    CATEGORY_LABELS,
+    classify,
+    resolve_targets,
+)
 
 # Instance `runner` sengaja TIDAK di-reekspor di sini: namanya sama dengan
 # submodul `app.orchestrator.runner`, dan re-ekspor akan menutupi modulnya

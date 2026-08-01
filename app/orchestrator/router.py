@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Agent, RoutingRule
+from app.models import Agent, RoutingRule, WorkflowStep
 
 CATEGORIES = [
     "coding_complex",
@@ -31,10 +31,10 @@ CATEGORY_LABELS = {
 }
 
 _KEYWORDS: list[tuple[str, re.Pattern[str]]] = [
-    ("data_analysis", re.compile(r"\b(csv|excel|xlsx|dataframe|pandas|analis\w*|dataset|grafik|chart)\b", re.I)),
-    ("private", re.compile(r"\b(rahasia|sensitif|privat|confidential|jangan (di)?kirim|offline|lokal saja)\b", re.I)),
-    ("coding_complex", re.compile(r"\b(refactor|arsitektur|migrasi|debug|bug|implementasi|refaktor|optimasi|test)\b", re.I)),
-    ("draft_bulk", re.compile(r"\b(draft|ringkas|rename|boilerplate|generate banyak|bulk|terjemah\w*)\b", re.I)),
+    ("data_analysis", re.compile(r"\b(csv|excel|xlsx|dataframe|pandas|analis\w*|dataset|grafik|chart)\b", re.IGNORECASE)),
+    ("private", re.compile(r"\b(rahasia|sensitif|privat|confidential|jangan (di)?kirim|offline|lokal saja)\b", re.IGNORECASE)),
+    ("coding_complex", re.compile(r"\b(refactor|arsitektur|migrasi|debug|bug|implementasi|refaktor|optimasi|test)\b", re.IGNORECASE)),
+    ("draft_bulk", re.compile(r"\b(draft|ringkas|rename|boilerplate|generate banyak|bulk|terjemah\w*)\b", re.IGNORECASE)),
 ]
 
 
@@ -72,3 +72,26 @@ async def resolve_targets(session: AsyncSession, category: str) -> list[Target]:
         Target(agent=agent, model=rule.model or agent.default_model, priority=rule.priority)
         for rule, agent in rows
     ]
+
+
+async def resolve_step_targets(
+    session: AsyncSession, step: WorkflowStep, fallback_category: str
+) -> list[Target]:
+    """Resolve targets JSONB step; kalau kosong, jatuh ke routing rule kategori step."""
+    step_targets = step.targets or []
+    if not step_targets:
+        category = step.category or fallback_category
+        return await resolve_targets(session, category)
+
+    # Urutan di JSONB adalah urutan cascade — priority diambil dari indeks
+    result: list[Target] = []
+    for idx, entry in enumerate(step_targets):
+        agent_id = entry.get("agent_id")
+        if agent_id is None:
+            continue
+        agent = await session.get(Agent, agent_id)
+        if agent is None or not agent.is_active:
+            continue
+        model = entry.get("model") or agent.default_model
+        result.append(Target(agent=agent, model=model, priority=idx))
+    return result

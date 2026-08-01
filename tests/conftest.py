@@ -4,23 +4,23 @@ import os
 
 # Harus diset SEBELUM app.config / app.db diimpor: engine dibuat saat import.
 os.environ.setdefault(
-    "CHOROS_DATABASE_URL", "postgresql+asyncpg://choros:choros@localhost:5432/choros_test"
+    "CHOROS_DATABASE_URL", "postgresql+asyncpg://choros:choros@localhost:5433/choros_test"
 )
 os.environ.setdefault("CHOROS_SECRET_KEY", "test-secret")
 os.environ.setdefault("CHOROS_ADMIN_USERNAME", "tester")
 
-import pytest  # noqa: E402
-from sqlalchemy import text  # noqa: E402
-from sqlalchemy.exc import InterfaceError, OperationalError  # noqa: E402
+import pytest
+from sqlalchemy import text
 
-from app.db import SessionLocal, apply_migrations, engine  # noqa: E402
-from app.models import Agent, RoutingRule, User  # noqa: E402
+from app.db import SessionLocal, apply_migrations, engine
+from app.models import Agent, RoutingRule, User
 
 TABLES = [
     "task_events",
     "task_logs",
     "quota_windows",
     "tasks",
+    "workflow_runs",
     "routing_rules",
     "workflow_steps",
     "workflows",
@@ -36,15 +36,10 @@ def anyio_backend() -> str:
 
 @pytest.fixture(autouse=True)
 async def clean_db():
-    # Engine dibuat saat import, sedangkan tiap test punya event loop sendiri.
-    # Tanpa dispose, koneksi pool tertinggal di loop lama → "attached to a
-    # different loop". Skip hanya untuk DB yang benar-benar tak terjangkau;
-    # error lain harus gagal terang-terangan, bukan tersamar jadi skip.
+    if os.environ.get("CHOROS_SKIP_DB_TESTS") == "1":
+        pytest.skip("CHOROS_SKIP_DB_TESTS diset")
     await engine.dispose()
-    try:
-        await apply_migrations()
-    except (OperationalError, InterfaceError, OSError) as exc:  # pragma: no cover
-        pytest.skip(f"database test tidak tersedia: {exc}")
+    await apply_migrations()
     async with engine.begin() as conn:
         await conn.execute(text(f"TRUNCATE {', '.join(TABLES)} RESTART IDENTITY CASCADE"))
     yield
@@ -55,6 +50,16 @@ async def clean_db():
 async def user():
     async with SessionLocal() as session:
         row = User(username="tester")
+        session.add(row)
+        await session.commit()
+        await session.refresh(row)
+        return row
+
+
+@pytest.fixture
+async def user_b():
+    async with SessionLocal() as session:
+        row = User(username="tester_b")
         session.add(row)
         await session.commit()
         await session.refresh(row)
@@ -94,3 +99,4 @@ async def make_route():
             return rule
 
     return _make
+

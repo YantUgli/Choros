@@ -60,7 +60,7 @@ Jadi tampilan konsol sama saja siapa pun provider yang jalan.
 |---|---|---|---|
 | `claude_code` | langganan Claude, harness resminya | ya | `~/.claude.json` → `projects[path].hasTrustDialogAccepted` |
 | `antigravity` | langganan Antigravity (`agy`) | ya | `~/.gemini/antigravity-cli/settings.json` → `trustedWorkspaces[]` |
-| `opencode` | API key sendiri (Groq/Ollama/dst) | ya | permission per-run lewat `--auto`, bukan config global |
+| `opencode` | API key sendiri (Zen/Groq/Ollama/dst) | ya | permission per-run lewat `--auto`, bukan config global |
 | `openai_compatible` | provider mentah | **tidak** | — |
 
 Aturan yang ditegakkan di kode, bukan sekadar dokumentasi:
@@ -72,6 +72,30 @@ Aturan yang ditegakkan di kode, bukan sekadar dokumentasi:
 - **Kuota tidak ditebak-tebak.** Yang dilacak hanya konsumsi yang benar-benar
   lewat choros + status mentok dari 429. Tidak ada endpoint yang ditembak untuk
   menerka sisa kuota.
+
+### Model gratis lewat opencode
+
+Selain Groq dan Ollama, opencode punya gateway sendiri (**OpenCode Zen**) dengan
+tier gratis yang cukup luas — kreditnya terpisah, jadi ini rung cascade yang nyata
+dan bukan duplikat opencode-groq. Agent `opencode-zen` di-seed memakainya:
+
+| Kategori | Model gratis Zen yang dipakai |
+|---|---|
+| `coding_complex` | `glm-5-free`, `minimax-m3-free`, `kimi-k2.5-free`, `grok-code` |
+| `data_analysis` | `qwen3.6-plus-free`, `glm-5-free` |
+| `draft_bulk` | `ling-3.0-flash-free`, `mimo-v2-flash-free`, `big-pickle` |
+| `text_planning` | `nemotron-3-ultra-free`, `mimo-v2-pro-free` (konteks 1M) |
+
+Setup: `opencode auth login` → pilih OpenCode Zen. Kredensialnya disimpan opencode
+sendiri, choros tidak menyentuhnya.
+
+> **`private` sengaja tidak memakai Zen.** Dokumentasi Zen menyatakan data pada
+> model gratis boleh dipakai untuk melatih model. Kategori privat tetap
+> ollama-saja (lokal).
+
+Daftar model gratis Zen berubah cepat. Cek ulang lewat `/models` di dalam opencode
+atau [models.dev](https://models.dev), lalu sesuaikan `ROUTES` di `scripts/seed.py`
+dan tabel tier di `app/orchestrator/quality.py`.
 
 ## Fallback (cascade)
 
@@ -115,7 +139,7 @@ createdb choros_test
 .venv/bin/python -m pytest
 ```
 
-54 test: parser tiap harness (bentuknya diambil dari output CLI sungguhan),
+56 test: parser tiap harness (bentuknya diambil dari output CLI sungguhan),
 quality floor, routing, isolasi/trust, dan 10 skenario cascade end-to-end dengan
 adapter palsu — supaya perilaku fallback teruji tanpa membakar kuota.
 

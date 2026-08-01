@@ -137,7 +137,7 @@ class OpenCodeAdapter(BaseCliAdapter):
             return ""
         part_id = str(part.get("id") or id(part))
         previous = self._parts.get(part_id, "")
-        delta = text[len(previous):] if text.startswith(previous) else text
+        delta = text.removeprefix(previous)
         if track:
             if part_id not in self._parts:
                 self._order.append(part_id)

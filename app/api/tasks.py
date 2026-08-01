@@ -10,6 +10,11 @@ from sqlalchemy import desc, select
 
 from app.models import Task, TaskLog
 from app.orchestrator.bus import END, bus
+from app.orchestrator.isolation import (
+    discard_workspace_branch,
+    get_workspace_diff,
+    merge_workspace_branch,
+)
 from app.orchestrator.router import CATEGORIES, CATEGORY_LABELS, classify
 from app.orchestrator.runner import load_task_events, runner
 from app.schemas import FollowUpIn, TaskIn, TaskLogOut, TaskOut
@@ -78,6 +83,34 @@ async def get_task_logs(task_id: int, user: CurrentUser, session: DbSession) -> 
 async def cancel_task(task_id: int, user: CurrentUser, session: DbSession) -> dict[str, bool]:
     await _owned_task(task_id, user, session)
     return {"cancelled": await runner.cancel(task_id)}
+
+
+@router.get("/{task_id}/diff")
+async def get_task_diff(task_id: int, user: CurrentUser, session: DbSession) -> dict[str, Any]:
+    task = await _owned_task(task_id, user, session)
+    if task.mode != "autonomous" or not task.project_path:
+        raise HTTPException(status_code=400, detail="tugas ini tidak memakai mode otonom terisolasi")
+    return await get_workspace_diff(task.project_path, task.id, task.workspace_path)
+
+
+@router.post("/{task_id}/merge")
+async def merge_task_worktree(task_id: int, user: CurrentUser, session: DbSession) -> dict[str, Any]:
+    task = await _owned_task(task_id, user, session)
+    if task.mode != "autonomous" or not task.project_path:
+        raise HTTPException(status_code=400, detail="tugas ini tidak memakai mode otonom terisolasi")
+    ok, msg = await merge_workspace_branch(task.project_path, task.id, task.workspace_path)
+    if not ok:
+        raise HTTPException(status_code=409, detail=msg)
+    return {"success": True, "message": msg}
+
+
+@router.post("/{task_id}/discard")
+async def discard_task_worktree(task_id: int, user: CurrentUser, session: DbSession) -> dict[str, Any]:
+    task = await _owned_task(task_id, user, session)
+    if task.mode != "autonomous" or not task.project_path:
+        raise HTTPException(status_code=400, detail="tugas ini tidak memakai mode otonom terisolasi")
+    ok, msg = await discard_workspace_branch(task.project_path, task.id, task.workspace_path)
+    return {"success": ok, "message": msg}
 
 
 @router.post("/{task_id}/reply", response_model=TaskOut, status_code=201)

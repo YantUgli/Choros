@@ -20,19 +20,24 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters.registry import adapter_can_execute, build_adapter
 from app.config import get_settings
+from app.db import session_scope
 from app.events import ERROR_RATE_LIMIT, Event
 from app.models import Agent, Task, TaskEvent, TaskLog
 from app.orchestrator import quota
 from app.orchestrator.bus import bus
-from app.orchestrator.isolation import IsolationError, Workspace, prepare_workspace
+from app.orchestrator.isolation import (
+    IsolationError,
+    Workspace,
+    cleanup_workspace,
+    prepare_workspace,
+)
 from app.orchestrator.quality import meets_floor
 from app.orchestrator.router import Target, resolve_targets
-from app.db import session_scope
 
 # Kategori yang tidak butuh "tangan" (boleh dijalankan model mentah). PRD §3.
 BRAIN_ONLY_CATEGORIES = {"text_planning"}
@@ -56,12 +61,33 @@ class RunHandle:
     cancelled: bool = False
 
 
+@dataclass(slots=True)
+class RunContext:
+    """Nilai yang tetap sepanjang satu tugas, apa pun step-nya."""
+    task_id: int
+    user_id: int
+    category: str
+    mode: str
+    permission_mode: str
+    workspace: Workspace
+    plan_artifact: str | None = None
+    resume_session_id: str | None = None
+
+
+@dataclass(slots=True)
+class CascadeResult:
+    attempt: Attempt | None      # attempt yang sukses; None kalau rantai habis
+    skipped: list[str] = field(default_factory=list)
+
+
 class TaskRunner:
     """Menjalankan tugas di background dan menyiarkan event ke bus."""
 
     def __init__(self) -> None:
         self._running: dict[int, RunHandle] = {}
         self._seq: dict[int, int] = {}
+        self._event_buffer: dict[int, list[TaskEvent]] = {}
+        self._semaphore: asyncio.Semaphore | None = None
 
     # ---------- kontrol ----------
 
@@ -90,11 +116,47 @@ class TaskRunner:
         for task_id in list(self._running):
             await self.cancel(task_id)
 
+    async def recover_interrupted_tasks(self) -> int:
+        """Pindai tugas berstatus 'queued' atau 'running' saat startup, dan ubah status ke 'interrupted'."""
+        count = 0
+        async with session_scope() as session:
+            stmt = select(Task).where(Task.status.in_(["queued", "running"]))
+            tasks = (await session.execute(stmt)).scalars().all()
+            for task in tasks:
+                old_status = task.status
+                task.status = "interrupted"
+                task.finished_at = datetime.now(UTC)
+                count += 1
+                max_seq_stmt = select(func.coalesce(func.max(TaskEvent.seq), 0)).where(
+                    TaskEvent.task_id == task.id
+                )
+                max_seq = (await session.execute(max_seq_stmt)).scalar() or 0
+                session.add(
+                    TaskEvent(
+                        task_id=task.id,
+                        seq=max_seq + 1,
+                        type="status",
+                        data={
+                            "message": f"Tugas terinterupsi dari status '{old_status}' (restart server/orchestrator)"
+                        },
+                    )
+                )
+            await session.commit()
+        return count
+
     # ---------- eksekusi ----------
 
     async def _guarded(self, task_id: int) -> None:
+        if self._semaphore is None:
+            self._semaphore = asyncio.Semaphore(get_settings().max_concurrent_tasks)
+
         try:
-            await self._execute(task_id)
+            if self._semaphore.locked():
+                max_tasks = get_settings().max_concurrent_tasks
+                queue_pos = max(1, len(self._running) - max_tasks)
+                await self._emit(task_id, Event.status(f"menunggu antrean konkurensi... (posisi #{queue_pos})"))
+            async with self._semaphore:
+                await self._execute(task_id)
         except asyncio.CancelledError:
             await self._emit(task_id, Event.status("tugas dibatalkan"))
             await self._finish(task_id, status="cancelled")
@@ -103,6 +165,7 @@ class TaskRunner:
             await self._emit(task_id, Event.error("crash", f"orchestrator gagal: {exc!r}"))
             await self._finish(task_id, status="error")
         finally:
+            await self._flush_events(task_id)
             bus.close(task_id)
             self._running.pop(task_id, None)
             self._seq.pop(task_id, None)
@@ -127,6 +190,28 @@ class TaskRunner:
             project_path = task.project_path or settings.default_project_path
             allow_unisolated = bool(task.allow_unisolated)
             resume_session_id = task.resume_session_id
+            owns_workspace = task.owns_workspace if task.owns_workspace is not None else True
+            workflow_run_id = task.workflow_run_id
+            existing_workspace_path = task.workspace_path
+
+            # Workflow step: resolve targets dari step JSONB kalau ada
+            if workflow_run_id is not None and task.step_order is not None:
+                from app.models import WorkflowRun, WorkflowStep
+                from app.orchestrator.router import resolve_step_targets
+                run = await session.get(WorkflowRun, workflow_run_id)
+                if run is not None:
+                    step = (
+                        await session.execute(
+                            select(WorkflowStep).where(
+                                WorkflowStep.workflow_id == run.workflow_id,
+                                WorkflowStep.step_order == task.step_order,
+                            )
+                        )
+                    ).scalar_one_or_none()
+                    if step is not None:
+                        step_targets = await resolve_step_targets(session, step, category)
+                        if step_targets:
+                            targets = step_targets
 
             # Follow-up: sesi hanya bisa dilanjutkan di harness yang sama, jadi
             # agent itu dinaikkan ke urutan pertama. Kalau tetap gagal, cascade
@@ -157,20 +242,33 @@ class TaskRunner:
                 ),
             )
             await self._finish(task_id, status="halted")
+            if workflow_run_id:
+                await self._advance_workflow(workflow_run_id)
             return
 
         # --- ruang kerja (isolasi untuk mode otonom) ---
-        try:
-            workspace = await prepare_workspace(
-                project_path,
-                task_id=task_id,
-                mode=mode,
-                allow_unisolated=allow_unisolated,
+        # §3.4: kalau owns_workspace=False, pakai workspace dari run (jangan buat baru)
+        if not owns_workspace and existing_workspace_path:
+            workspace = Workspace(
+                path=existing_workspace_path,
+                isolated=True,
+                branch=None,
+                note="workspace bersama dari workflow run",
             )
-        except IsolationError as exc:
-            await self._emit(task_id, Event.error("crash", str(exc)))
-            await self._finish(task_id, status="halted")
-            return
+        else:
+            try:
+                workspace = await prepare_workspace(
+                    project_path,
+                    task_id=task_id,
+                    mode=mode,
+                    allow_unisolated=allow_unisolated,
+                )
+            except IsolationError as exc:
+                await self._emit(task_id, Event.error("crash", str(exc)))
+                await self._finish(task_id, status="halted")
+                if workflow_run_id:
+                    await self._advance_workflow(workflow_run_id)
+                return
 
         if workspace.note:
             await self._emit(task_id, Event.status(workspace.note, workspace=workspace.path))
@@ -180,8 +278,65 @@ class TaskRunner:
                 task.workspace_path = workspace.path
                 await session.commit()
 
-        needs_hands = category not in BRAIN_ONLY_CATEGORIES
         permission_mode = "autonomous" if mode == "autonomous" else "safe"
+        ctx = RunContext(
+            task_id=task_id,
+            user_id=user_id,
+            category=category,
+            mode=mode,
+            permission_mode=permission_mode,
+            workspace=workspace,
+            plan_artifact=plan_artifact,
+            resume_session_id=resume_session_id,
+        )
+
+        try:
+            result = await self._run_cascade(
+                ctx,
+                targets=targets,
+                prompt=prompt,
+                quality_floor=quality_floor,
+            )
+
+            if result.attempt:
+                await self._finish(
+                    task_id,
+                    status="ok",
+                    output=result.attempt.output,
+                    session_id=result.attempt.session_id,
+                )
+                await self._emit(task_id, Event.status(f"tugas selesai lewat {result.attempt.target.label}"))
+            else:
+                await self._finish(task_id, status="halted")
+        finally:
+            # cleanup hanya kalau owns_workspace dan mode non-otonom
+            if owns_workspace and mode != "autonomous":
+                await cleanup_workspace(project_path, workspace, remove=True)
+
+        # Setelah task selesai, majukan workflow run kalau ini step task
+        if workflow_run_id:
+            await self._advance_workflow(workflow_run_id)
+
+    async def _advance_workflow(self, workflow_run_id: int) -> None:
+        """Majukan workflow run setelah step task selesai."""
+        try:
+            from app.orchestrator.workflow import advance_run
+            await advance_run(workflow_run_id)
+        except Exception as exc:
+            import logging
+            logging.getLogger("choros").error(
+                "gagal memajukan workflow run %d: %s", workflow_run_id, exc
+            )
+
+    async def _run_cascade(
+        self,
+        ctx: RunContext,
+        *,
+        targets: list[Target],
+        prompt: str,
+        quality_floor: str | None,
+    ) -> CascadeResult:
+        needs_hands = ctx.category not in BRAIN_ONLY_CATEGORIES
         skipped: list[str] = []
 
         for index, target in enumerate(targets):
@@ -192,42 +347,42 @@ class TaskRunner:
             if not meets_floor(target.model, quality_floor, override=tier_override):
                 reason = f"di bawah batas mutu '{quality_floor}'"
                 skipped.append(f"{target.label} ({reason})")
-                await self._emit(task_id, Event.status(f"lewati {target.label}: {reason}"))
+                await self._emit(ctx.task_id, Event.status(f"lewati {target.label}: {reason}"))
                 continue
 
             # tangan vs otak (PRD §3)
             if needs_hands and not adapter_can_execute(agent.adapter_type):
                 reason = "model mentah tanpa tangan, kategori ini butuh eksekusi"
                 skipped.append(f"{target.label} ({reason})")
-                await self._emit(task_id, Event.status(f"lewati {target.label}: {reason}"))
+                await self._emit(ctx.task_id, Event.status(f"lewati {target.label}: {reason}"))
                 continue
 
             # [3] cek kuota
             async with session_scope() as session:
                 exhausted, until = await quota.is_exhausted(
-                    session, user_id=user_id, agent_id=agent.id, model=target.model
+                    session, user_id=ctx.user_id, agent_id=agent.id, model=target.model
                 )
             if exhausted:
                 reason = f"kuota mentok sampai {until:%H:%M %d/%m}" if until else "kuota mentok"
                 skipped.append(f"{target.label} ({reason})")
-                await self._emit(task_id, Event.status(f"lewati {target.label}: {reason}"))
+                await self._emit(ctx.task_id, Event.status(f"lewati {target.label}: {reason}"))
                 continue
 
             # [1] titik-ulang berbasis plan
             attempt_prompt = prompt
             if index > 0:
-                attempt_prompt = _rebuild_prompt(prompt, plan_artifact)
+                attempt_prompt = _rebuild_prompt(prompt, ctx.plan_artifact)
                 await self._emit(
-                    task_id,
+                    ctx.task_id,
                     Event.status(
                         "fallback: mengulang dari artefak plan"
-                        if plan_artifact
+                        if ctx.plan_artifact
                         else "fallback: mengulang dari prompt awal (tidak ada artefak plan)"
                     ),
                 )
 
             await self._emit(
-                task_id,
+                ctx.task_id,
                 Event.status(
                     f"menjalankan {target.label} (prioritas {target.priority})",
                     agent=agent.name,
@@ -236,47 +391,40 @@ class TaskRunner:
             )
 
             # resume hanya sah pada attempt pertama di agent yang memegang sesinya
-            attempt_resume = resume_session_id if index == 0 else None
+            attempt_resume = ctx.resume_session_id if index == 0 else None
 
             attempt = await self._run_attempt(
-                task_id,
+                ctx.task_id,
                 agent=agent,
                 target=target,
                 prompt=attempt_prompt,
-                permission_mode=permission_mode,
-                workspace=workspace,
+                permission_mode=ctx.permission_mode,
+                workspace=ctx.workspace,
                 resume_session_id=attempt_resume,
             )
 
             await self._log_attempt(
-                task_id,
-                user_id=user_id,
+                ctx.task_id,
+                user_id=ctx.user_id,
                 agent_id=agent.id,
                 model=target.model,
-                category=category,
-                mode=mode,
+                category=ctx.category,
+                mode=ctx.mode,
                 attempt=attempt,
             )
 
             if attempt.status == "ok":
-                await self._finish(
-                    task_id,
-                    status="ok",
-                    output=attempt.output,
-                    session_id=attempt.session_id,
-                )
-                await self._emit(task_id, Event.status(f"tugas selesai lewat {target.label}"))
-                return
+                return CascadeResult(attempt=attempt, skipped=skipped)
 
             if attempt.status == "rate_limited":
                 await self._emit(
-                    task_id,
+                    ctx.task_id,
                     Event.status(f"{target.label} mentok kuota → lanjut target berikutnya"),
                 )
             else:
                 detail = (attempt.error.data.get("message") if attempt.error else "") or ""
                 await self._emit(
-                    task_id,
+                    ctx.task_id,
                     Event.status(
                         f"{target.label} gagal ({attempt.status}) → lanjut target berikutnya",
                         detail=detail[:400],
@@ -285,14 +433,14 @@ class TaskRunner:
 
         # ujung rantai — berhenti bersih, bukan loop (PRD §6.3)
         await self._emit(
-            task_id,
+            ctx.task_id,
             Event.status(
                 "eksekusi tertahan: semua target habis. Plan & log tersimpan, "
                 "jalankan ulang setelah kuota reset.",
                 skipped=skipped,
             ),
         )
-        await self._finish(task_id, status="halted")
+        return CascadeResult(attempt=None, skipped=skipped)
 
     async def _run_attempt(
         self,
@@ -391,24 +539,29 @@ class TaskRunner:
     async def _emit(self, task_id: int, event: Event) -> None:
         seq = self._seq.get(task_id, 0) + 1
         self._seq[task_id] = seq
-        payload = {"seq": seq, **event.as_dict()}
-        bus.publish(task_id, payload)
-
-        # Delta parsial hanya untuk console live; menyimpannya ke DB berarti ribuan
-        # baris per tugas tanpa menambah informasi (versi utuhnya sudah tersimpan).
+        bus.publish(task_id, {"seq": seq, **event.as_dict()})
         if event.data.get("partial"):
             return
-        async with session_scope() as session:
-            session.add(
-                TaskEvent(
-                    task_id=task_id,
-                    seq=seq,
-                    type=event.type,
-                    agent=event.agent,
-                    model=event.model,
-                    data=event.data,
-                )
+        buf = self._event_buffer.setdefault(task_id, [])
+        buf.append(
+            TaskEvent(
+                task_id=task_id,
+                seq=seq,
+                type=event.type,
+                agent=event.agent,
+                model=event.model,
+                data=event.data,
             )
+        )
+        if len(buf) >= 20:
+            await self._flush_events(task_id)
+
+    async def _flush_events(self, task_id: int) -> None:
+        buf = self._event_buffer.pop(task_id, None)
+        if not buf:
+            return
+        async with session_scope() as session:
+            session.add_all(buf)
             await session.commit()
 
     async def _log_attempt(
@@ -458,6 +611,10 @@ class TaskRunner:
             await session.commit()
 
 
+    def get_buffered_events(self, task_id: int) -> list[TaskEvent]:
+        return list(self._event_buffer.get(task_id, []))
+
+
 def _rebuild_prompt(prompt: str, plan_artifact: str | None) -> str:
     """Titik-ulang berbasis plan (PRD §6.1).
 
@@ -495,7 +652,7 @@ def _merge_usage(acc: dict[str, Any], new: dict[str, Any]) -> dict[str, Any]:
 async def load_task_events(session: AsyncSession, task_id: int) -> list[dict[str, Any]]:
     stmt = select(TaskEvent).where(TaskEvent.task_id == task_id).order_by(TaskEvent.seq)
     rows = (await session.execute(stmt)).scalars()
-    return [
+    events = [
         {
             "seq": row.seq,
             "type": row.type,
@@ -506,6 +663,24 @@ async def load_task_events(session: AsyncSession, task_id: int) -> list[dict[str
         }
         for row in rows
     ]
+
+    # Gabungkan event in-memory yang belum sempat ter-flush ke DB agar replay SSE 100% utuh
+    buffered = runner.get_buffered_events(task_id)
+    if buffered:
+        existing_seqs = {e["seq"] for e in events}
+        for te in buffered:
+            if te.seq not in existing_seqs:
+                events.append({
+                    "seq": te.seq,
+                    "type": te.type,
+                    "agent": te.agent,
+                    "model": te.model,
+                    "ts": te.created_at.timestamp() if te.created_at else None,
+                    "data": te.data,
+                })
+        events.sort(key=lambda x: x["seq"])
+
+    return events
 
 
 runner = TaskRunner()

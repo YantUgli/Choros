@@ -19,6 +19,7 @@
       <button class="tab active" data-view="run">Tugas</button>
       <button class="tab" data-view="agents">Agent</button>
       <button class="tab" data-view="routing">Routing</button>
+      <button class="tab" data-view="workflows">Workflow</button>
       <button class="tab" data-view="quota">Kuota</button>
     </nav>
   </header>
@@ -94,6 +95,21 @@
               <button id="send-followup" class="primary">Kirim</button>
             </div>
           </div>
+
+          <div id="worktree-panel" class="worktree-panel hidden">
+            <h3>Worktree Otonom (<span id="wt-branch"></span>)</h3>
+            <div class="actions">
+              <button id="wt-review" class="ghost tiny">Lihat Diff</button>
+              <button id="wt-merge" class="primary tiny">Merge ke Utama</button>
+              <button id="wt-discard" class="danger tiny">Buang Worktree</button>
+            </div>
+            <pre id="wt-diff" class="diff-box hidden"></pre>
+          </div>
+
+          <div id="attempts-panel" class="attempts-panel hidden">
+            <h3>Percobaan Cascade</h3>
+            <table id="attempts-table" class="table"></table>
+          </div>
         </div>
       </div>
     </section>
@@ -148,6 +164,54 @@
           </div>
         </form>
         <div id="routing-groups"></div>
+      </div>
+    </section>
+
+    <!-- ============ WORKFLOW ============ -->
+    <section id="view-workflows" class="view">
+      <div class="split">
+        <div class="panel">
+          <div class="console-head">
+            <h2>Workflow</h2>
+            <button id="workflow-create" class="primary tiny">Buat Baru</button>
+          </div>
+          <div id="workflow-list" class="workflow-list"></div>
+        </div>
+        
+        <div class="panel-wrap">
+          <div class="panel hidden" id="workflow-editor-panel">
+            <h2>Editor Workflow</h2>
+            <form id="workflow-form">
+              <input type="hidden" id="workflow-id" />
+              <label>Nama<input id="workflow-name" required placeholder="Contoh: rilis-ke-staging" /></label>
+              <h3>Steps</h3>
+              <div id="workflow-steps-container" class="workflow-editor"></div>
+              <button type="button" id="workflow-add-step" class="ghost tiny" style="margin-bottom: 12px">+ Tambah Step</button>
+              <div class="actions">
+                <button type="submit" class="primary">Simpan Workflow</button>
+                <button type="button" id="workflow-cancel" class="ghost">Batal</button>
+              </div>
+            </form>
+          </div>
+          
+          <div class="panel hidden" id="workflow-run-panel">
+            <div class="console-head">
+              <h2>Status Run</h2>
+              <span id="run-status" class="pill">idle</span>
+            </div>
+            <div class="step-list" id="run-steps"></div>
+            
+            <div id="approval-panel" class="approval-panel hidden">
+              <h3>Persetujuan Dibutuhkan</h3>
+              <p class="note">Periksa plan artifact berikut dan setujui untuk melanjutkan.</p>
+              <textarea id="approval-artifact" rows="8"></textarea>
+              <div class="actions">
+                <button id="approval-approve" class="primary">Setujui</button>
+                <button id="approval-reject" class="ghost danger">Tolak</button>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
 

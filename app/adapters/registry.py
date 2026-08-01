@@ -5,8 +5,8 @@ from typing import Any
 from app.adapters.antigravity import AntigravityAdapter
 from app.adapters.base import AgentAdapter
 from app.adapters.claude_code import ClaudeCodeAdapter
-from app.adapters.opencode import OpenCodeAdapter
 from app.adapters.openai_compat import OpenAICompatAdapter
+from app.adapters.opencode import OpenCodeAdapter
 from app.config import get_settings
 from app.models import Agent
 

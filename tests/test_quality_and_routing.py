@@ -11,6 +11,36 @@ def test_tier_ordering_matches_intuition():
     assert model_tier("groq/llama-3.3-70b-versatile") > model_tier("groq/llama-3.1-8b-instant")
 
 
+def test_opencode_zen_free_models_are_ranked():
+    """Tanpa entri eksplisit semua model Zen jatuh ke TIER_UNKNOWN dan tersaring
+    habis oleh floor 'strong'/'mid' — rute-nya jadi mati diam-diam."""
+    for model in (
+        "opencode/glm-5-free",
+        "opencode/minimax-m3-free",
+        "opencode/kimi-k2.5-free",
+        "opencode/qwen3.6-plus-free",
+        "opencode/nemotron-3-ultra-free",
+        "opencode/grok-code",
+    ):
+        assert meets_floor(model, "strong"), model
+
+    for model in (
+        "opencode/big-pickle",
+        "opencode/ling-3.0-flash-free",
+        "opencode/mimo-v2-flash-free",
+        "opencode/north-mini-code-free",
+    ):
+        assert meets_floor(model, "mid"), model
+        assert not meets_floor(model, "strong"), model
+
+
+def test_zen_names_containing_mini_are_not_demoted():
+    """"minimax"/"north-mini-code" mengandung "mini"; pola generik TIER_LIGHT
+    tidak boleh menangkapnya duluan."""
+    assert model_tier("opencode/minimax-m3-free") > model_tier("opencode/big-pickle")
+    assert model_tier("opencode/north-mini-code-free") > model_tier("groq/llama-3.1-8b-instant")
+
+
 def test_quality_floor_blocks_weaker_model():
     # PRD §6.2: lebih baik berhenti daripada menghasilkan kode rusak
     assert meets_floor("sonnet", "strong")

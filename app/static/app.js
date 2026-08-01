@@ -61,6 +61,7 @@ document.querySelectorAll(".tab").forEach((tab) => {
     if (tab.dataset.view === "quota") loadQuota();
     if (tab.dataset.view === "agents") loadAgents();
     if (tab.dataset.view === "routing") loadRouting();
+    if (tab.dataset.view === "workflows") loadWorkflows();
   });
 });
 
@@ -152,6 +153,8 @@ function resetConsole() {
   $("console").innerHTML = "";
   $("result-panel").classList.add("hidden");
   $("result-text").textContent = "";
+  $("worktree-panel").classList.add("hidden");
+  $("attempts-panel").classList.add("hidden");
   state.partialLine = null;
 }
 
@@ -180,6 +183,8 @@ async function refreshTaskStatus() {
   setStatus(task.status);
   $("cancel").disabled = task.status !== "running" && task.status !== "queued";
   if (task.final_output) showResult(task.final_output);
+  loadWorktreePanel(task);
+  loadTaskLogs(state.taskId);
   loadTasks();
 }
 
@@ -190,6 +195,90 @@ function setStatus(status) {
 }
 
 /* ---------------- tugas ---------------- */
+
+async function loadTaskLogs(taskId) {
+  try {
+    const logs = await api(`/api/tasks/${taskId}/logs`);
+    const panel = $("attempts-panel");
+    const table = $("attempts-table");
+    table.innerHTML = "";
+    if (!logs || !logs.length) {
+      panel.classList.add("hidden");
+      return;
+    }
+    panel.classList.remove("hidden");
+    const head = table.insertRow();
+    ["#", "agent", "model", "status", "tokens in/out"].forEach((h) => {
+      const th = document.createElement("th");
+      th.textContent = h;
+      head.appendChild(th);
+    });
+    logs.forEach((log, idx) => {
+      const row = table.insertRow();
+      const agentName = state.agents.find((a) => a.id === log.agent_id)?.name || `agent #${log.agent_id}`;
+      const u = log.usage || {};
+      const tokensStr = `in:${u.input_tokens || 0} out:${u.output_tokens || 0}`;
+      [idx + 1, agentName, log.model || "—", log.status || "—", tokensStr].forEach((v, i) => {
+        const cell = row.insertCell();
+        if (i === 3) {
+          const p = el("span", `pill ${log.status === "ok" ? "ok" : "error"}`, log.status);
+          cell.appendChild(p);
+        } else {
+          cell.textContent = v;
+        }
+      });
+    });
+  } catch (err) {
+    console.error("gagal memuat task logs", err);
+  }
+}
+
+function loadWorktreePanel(task) {
+  const panel = $("worktree-panel");
+  if (task.mode !== "autonomous" || !task.workspace_path) {
+    panel.classList.add("hidden");
+    return;
+  }
+  panel.classList.remove("hidden");
+  $("wt-branch").textContent = `choros/task-${task.id}`;
+  $("wt-diff").classList.add("hidden");
+}
+
+$("wt-review").addEventListener("click", async () => {
+  if (!state.taskId) return;
+  try {
+    const res = await api(`/api/tasks/${state.taskId}/diff`);
+    const diffBox = $("wt-diff");
+    diffBox.textContent = res.diff || "Kosong";
+    diffBox.classList.remove("hidden");
+  } catch (err) {
+    notify(`gagal mengambil diff: ${err.message}`);
+  }
+});
+
+$("wt-merge").addEventListener("click", async () => {
+  if (!state.taskId) return;
+  if (!confirm("Merge hasil kerja worktree ini ke direktori utama?")) return;
+  try {
+    const res = await api(`/api/tasks/${state.taskId}/merge`, { method: "POST" });
+    notify(res.message, "ok");
+    $("worktree-panel").classList.add("hidden");
+  } catch (err) {
+    notify(`merge gagal: ${err.message}`);
+  }
+});
+
+$("wt-discard").addEventListener("click", async () => {
+  if (!state.taskId) return;
+  if (!confirm("Buang worktree dan abaikan perubahan otonom?")) return;
+  try {
+    const res = await api(`/api/tasks/${state.taskId}/discard`, { method: "POST" });
+    notify(res.message, "ok");
+    $("worktree-panel").classList.add("hidden");
+  } catch (err) {
+    notify(`discard gagal: ${err.message}`);
+  }
+});
 
 async function loadCategories() {
   state.categories = await api("/api/tasks/categories");
@@ -521,6 +610,245 @@ $("login-form").addEventListener("submit", async (e) => {
   }
 });
 
+/* ---------------- workflows ---------------- */
+
+let currentRunId = null;
+
+async function loadWorkflows() {
+  const workflows = await api("/api/workflows");
+  const list = $("workflow-list");
+  list.innerHTML = "";
+  if (!workflows.length) {
+    list.appendChild(el("p", "note", "belum ada workflow"));
+    return;
+  }
+  workflows.forEach(wf => {
+    const card = el("div", "workflow-card");
+    const title = el("div", "title", wf.name);
+    const actions = el("div", "actions");
+    
+    const runBtn = el("button", "primary tiny", "Run");
+    runBtn.onclick = () => runWorkflow(wf.id);
+    
+    const editBtn = el("button", "ghost tiny", "Ubah");
+    editBtn.onclick = () => editWorkflow(wf.id);
+    
+    const delBtn = el("button", "ghost tiny danger", "Hapus");
+    delBtn.onclick = async () => {
+      if (!confirm(`Hapus workflow ${wf.name}?`)) return;
+      await deleteWorkflow(wf.id);
+    };
+    
+    actions.append(runBtn, editBtn, delBtn);
+    card.append(title, actions);
+    list.appendChild(card);
+  });
+}
+
+$("workflow-create").addEventListener("click", () => {
+  $("workflow-editor-panel").classList.remove("hidden");
+  $("workflow-run-panel").classList.add("hidden");
+  $("workflow-form").reset();
+  $("workflow-id").value = "";
+  $("workflow-steps-container").innerHTML = "";
+  addWorkflowStep();
+});
+
+$("workflow-cancel").addEventListener("click", () => {
+  $("workflow-editor-panel").classList.add("hidden");
+});
+
+function addWorkflowStep(step = {}) {
+  const container = $("workflow-steps-container");
+  const idx = container.children.length;
+  
+  const stepDiv = el("div", "step-form");
+  
+  const delBtn = el("button", "ghost tiny danger remove-step", "✕");
+  delBtn.type = "button";
+  delBtn.onclick = () => stepDiv.remove();
+  
+  const nameLabel = el("label", null, "Nama Step");
+  const nameInput = el("input");
+  nameInput.className = "step-name";
+  nameInput.value = step.name || "";
+  nameInput.placeholder = "Contoh: tulis_kode";
+  nameLabel.appendChild(nameInput);
+  
+  const promptLabel = el("label", null, "Role Prompt");
+  const promptInput = el("textarea");
+  promptInput.className = "step-prompt";
+  promptInput.value = step.role_prompt || "";
+  promptInput.rows = 2;
+  promptLabel.appendChild(promptInput);
+  
+  const catLabel = el("label", null, "Kategori");
+  const catSelect = el("select");
+  catSelect.className = "step-category";
+  state.categories.forEach(c => catSelect.appendChild(new Option(c.label, c.value)));
+  if (step.category) catSelect.value = step.category;
+  catLabel.appendChild(catSelect);
+  
+  const qfLabel = el("label", null, "Quality Floor");
+  const qfSelect = el("select");
+  qfSelect.className = "step-qf";
+  qfSelect.innerHTML = `<option value="">— tanpa batas —</option><option value="frontier">frontier</option><option value="strong">strong</option><option value="mid">mid</option><option value="light">light</option>`;
+  if (step.quality_floor) qfSelect.value = step.quality_floor;
+  qfLabel.appendChild(qfSelect);
+  
+  const reqAppLabel = el("label", "check");
+  const reqAppCheck = el("input");
+  reqAppCheck.type = "checkbox";
+  reqAppCheck.className = "step-req-app";
+  reqAppCheck.checked = step.requires_approval || false;
+  reqAppLabel.append(reqAppCheck, el("span", null, "Butuh Persetujuan (Approval)"));
+  
+  const row = el("div", "row");
+  row.append(catLabel, qfLabel);
+  
+  stepDiv.append(delBtn, nameLabel, promptLabel, row, reqAppLabel);
+  container.appendChild(stepDiv);
+}
+
+$("workflow-add-step").addEventListener("click", () => addWorkflowStep());
+
+$("workflow-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const name = $("workflow-name").value.trim();
+  const stepDivs = document.querySelectorAll(".step-form");
+  const steps = Array.from(stepDivs).map((div, i) => ({
+    name: div.querySelector(".step-name").value.trim() || `step-${i+1}`,
+    role_prompt: div.querySelector(".step-prompt").value.trim(),
+    category: div.querySelector(".step-category").value || "coding",
+    quality_floor: div.querySelector(".step-qf").value || null,
+    requires_approval: div.querySelector(".step-req-app").checked,
+  }));
+  
+  const payload = { name, steps };
+  const id = $("workflow-id").value;
+  try {
+    if (id) {
+      await api(`/api/workflows/${id}`, { method: "PUT", body: JSON.stringify(payload) });
+    } else {
+      await api("/api/workflows", { method: "POST", body: JSON.stringify(payload) });
+    }
+    $("workflow-editor-panel").classList.add("hidden");
+    loadWorkflows();
+  } catch (err) {
+    notify(err.message);
+  }
+});
+
+async function editWorkflow(id) {
+  try {
+    const wf = await api(`/api/workflows/${id}`);
+    $("workflow-id").value = wf.id;
+    $("workflow-name").value = wf.name;
+    $("workflow-steps-container").innerHTML = "";
+    wf.steps.forEach(s => addWorkflowStep(s));
+    
+    $("workflow-editor-panel").classList.remove("hidden");
+    $("workflow-run-panel").classList.add("hidden");
+  } catch (err) {
+    notify(err.message);
+  }
+}
+
+async function deleteWorkflow(id) {
+  try {
+    await api(`/api/workflows/${id}`, { method: "DELETE" });
+    loadWorkflows();
+  } catch (err) {
+    notify(err.message);
+  }
+}
+
+async function runWorkflow(id) {
+  const goal = prompt("Apa yang ingin dikerjakan workflow ini?");
+  if (goal === null) return;
+  try {
+    const run = await api(`/api/workflows/${id}/run`, {
+      method: "POST",
+      body: JSON.stringify({ goal: goal.trim() || null }),
+    });
+    loadRun(run.id);
+  } catch (err) {
+    notify(err.message);
+  }
+}
+
+async function loadRun(runId) {
+  currentRunId = runId;
+  $("workflow-editor-panel").classList.add("hidden");
+  $("workflow-run-panel").classList.remove("hidden");
+  
+  try {
+    const run = await api(`/api/workflow-runs/${runId}`);
+    
+    const statusPill = $("run-status");
+    statusPill.textContent = run.status;
+    statusPill.className = `pill ${run.status}`;
+    
+    const stepsContainer = $("run-steps");
+    stepsContainer.innerHTML = "";
+    
+    run.steps.forEach(s => {
+      const item = el("div", `step-item ${s.status}`);
+      const titleWrap = el("div");
+      titleWrap.appendChild(el("div", "title", s.name || `Step #${s.step_order + 1}`));
+      if (s.task_id) {
+        titleWrap.appendChild(el("div", "note", `Task #${s.task_id}`));
+        item.onclick = () => {
+          document.querySelector('.tab[data-view="run"]').click();
+          selectTask(s.task_id);
+        };
+      }
+      const statPill = el("span", `pill ${s.status}`, s.status);
+      
+      item.append(titleWrap, statPill);
+      stepsContainer.appendChild(item);
+    });
+    
+    const needsApproval = run.status === "awaiting_approval" && run.pending_approval_step_id;
+    if (needsApproval) {
+      $("approval-panel").classList.remove("hidden");
+      $("approval-artifact").value = run.pending_approval_artifact || "";
+    } else {
+      $("approval-panel").classList.add("hidden");
+    }
+    
+    if (run.status === "running") {
+      setTimeout(() => { if (currentRunId === runId) loadRun(runId); }, 3000);
+    }
+  } catch (err) {
+    notify(err.message);
+  }
+}
+
+$("approval-approve").addEventListener("click", async () => {
+  if (!currentRunId) return;
+  const artifact = $("approval-artifact").value;
+  try {
+    await api(`/api/workflow-runs/${currentRunId}/approve`, {
+      method: "POST",
+      body: JSON.stringify({ plan_artifact: artifact })
+    });
+    loadRun(currentRunId);
+  } catch (err) {
+    notify(err.message);
+  }
+});
+
+$("approval-reject").addEventListener("click", async () => {
+  if (!currentRunId) return;
+  try {
+    await api(`/api/workflow-runs/${currentRunId}/reject`, { method: "POST" });
+    loadRun(currentRunId);
+  } catch (err) {
+    notify(err.message);
+  }
+});
+
 /* ---------------- boot ---------------- */
 
 async function boot() {
@@ -532,6 +860,7 @@ async function boot() {
     await loadCategories();
     await loadAgents();
     await loadTasks();
+    await loadWorkflows();
   } catch (err) {
     if (err.message !== "belum login") notify(err.message);
   }

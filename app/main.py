@@ -13,7 +13,9 @@ from app.api import ROUTERS
 from app.config import get_settings
 from app.db import SessionLocal, apply_migrations, engine
 from app.models import User
+from app.orchestrator.isolation import gc_old_worktrees
 from app.orchestrator.runner import runner
+from app.orchestrator.workflow import recover_interrupted_runs
 from app.security import auth_disabled
 
 log = logging.getLogger("choros")
@@ -24,6 +26,18 @@ STATIC_DIR = Path(__file__).parent / "static"
 async def lifespan(app: FastAPI):
     settings = get_settings()
     await apply_migrations()
+
+    recovered_count = await runner.recover_interrupted_tasks()
+    if recovered_count > 0:
+        log.info("%d tugas hanging ditandai 'interrupted'", recovered_count)
+
+    recovered_runs = await recover_interrupted_runs()
+    if recovered_runs > 0:
+        log.info("%d workflow run mandek dipulihkan", recovered_runs)
+
+    cleaned_worktrees = await gc_old_worktrees()
+    if cleaned_worktrees:
+        log.info("%d worktree lama dibersihkan oleh GC", len(cleaned_worktrees))
 
     async with SessionLocal() as session:
         exists = (

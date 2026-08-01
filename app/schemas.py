@@ -58,6 +58,8 @@ class TaskOut(BaseModel):
     workspace_path: str | None
     quality_floor: str | None
     final_output: str | None
+    workflow_run_id: int | None = None
+    step_order: int | None = None
     created_at: datetime | None
     finished_at: datetime | None
 
@@ -96,3 +98,86 @@ class FollowUpIn(BaseModel):
     """Jawaban user atas pertanyaan balik agent (PRD §8)."""
 
     answer: str
+
+
+# ---------- workflow schemas ----------
+
+
+class WorkflowStepIn(BaseModel):
+    name: str | None = None
+    role_prompt: str | None = None
+    targets: list[dict[str, Any]] = Field(default_factory=list)
+    quality_floor: str | None = None
+    requires_approval: bool = False
+    category: str | None = None
+
+
+class WorkflowIn(BaseModel):
+    name: str = Field(max_length=64)
+    steps: list[WorkflowStepIn] = Field(default_factory=list)
+
+
+class WorkflowStepOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    workflow_id: int
+    step_order: int
+    name: str | None = None
+    role_prompt: str | None
+    targets: list[dict[str, Any]]
+    quality_floor: str | None
+    requires_approval: bool
+    category: str | None
+
+
+class WorkflowOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    name: str
+    created_at: datetime | None
+
+
+class WorkflowDetailOut(WorkflowOut):
+    steps: list[WorkflowStepOut] = Field(default_factory=list)
+
+
+class WorkflowRunOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    workflow_id: int
+    goal: str
+    status: str
+    current_step: int
+    project_path: str | None
+    workspace_path: str | None
+    mode: str
+    created_at: datetime | None
+    finished_at: datetime | None
+
+
+class WorkflowRunStepOut(BaseModel):
+    id: int
+    step_order: int
+    name: str | None = None
+    role_prompt: str | None = None
+    requires_approval: bool = False
+    status: str
+    task_id: int | None = None
+
+
+class WorkflowRunDetailOut(WorkflowRunOut):
+    steps: list[WorkflowRunStepOut] = Field(default_factory=list)
+    pending_approval_step_id: int | None = None
+    pending_approval_artifact: str | None = None
+
+
+class RunApprovalIn(BaseModel):
+    plan_artifact: str | None = None
+
+
+class WorkflowRunIn(BaseModel):
+    goal: str | None = None
+    project_path: str | None = None
+    mode: str = "interactive"
+    allow_unisolated: bool = False
+
