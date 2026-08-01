@@ -719,7 +719,7 @@ $("workflow-form").addEventListener("submit", async (e) => {
   const steps = Array.from(stepDivs).map((div, i) => ({
     name: div.querySelector(".step-name").value.trim() || `step-${i+1}`,
     role_prompt: div.querySelector(".step-prompt").value.trim(),
-    category: div.querySelector(".step-category").value || "coding",
+    category: div.querySelector(".step-category").value || "coding_complex",
     quality_floor: div.querySelector(".step-qf").value || null,
     requires_approval: div.querySelector(".step-req-app").checked,
   }));
