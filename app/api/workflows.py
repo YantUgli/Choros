@@ -209,7 +209,7 @@ async def run_workflow(
     workflow_id: int,
     user: CurrentUser,
     session: DbSession,
-    payload: WorkflowRunIn | None = Body(default=None),
+    payload: WorkflowRunIn | None = None,
 ) -> WorkflowRun:
     wf = await _owned_workflow(workflow_id, user, session)
     opts = payload or WorkflowRunIn()
@@ -339,7 +339,7 @@ async def approve_run(
     run_id: int,
     user: CurrentUser,
     session: DbSession,
-    payload: RunApprovalIn | None = Body(default=None),
+    payload: RunApprovalIn | None = None,
 ) -> dict:
     run = await _owned_run(run_id, user, session)
     if run.status != "awaiting_approval":
