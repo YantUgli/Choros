@@ -21,7 +21,13 @@
       <button class="tab" data-view="routing">Routing</button>
       <button class="tab" data-view="workflows">Workflow</button>
       <button class="tab" data-view="quota">Kuota</button>
+      <button class="tab hidden" id="tab-users" data-view="users">Pengguna</button>
     </nav>
+    <div class="user-bar">
+      <span id="user-display" class="user-display"></span>
+      <button id="change-pass-btn" class="ghost tiny hidden">Password</button>
+      <button id="logout-btn" class="ghost tiny hidden">Keluar</button>
+    </div>
   </header>
 
   <div id="banner" class="banner hidden"></div>
@@ -228,6 +234,30 @@
         <h3>Konsumsi 7 hari terakhir</h3>
         <table id="usage-table" class="table"></table>
       </div>
+    <!-- ============ PENGGUNA ============ -->
+    <section id="view-users" class="view">
+      <div class="panel">
+        <h2>Pengguna</h2>
+        <p class="note">Pengelolaan pengguna (khusus admin). Pengguna baru otomatis mendapat agent &amp; routing rule default jika dicentang.</p>
+        <form id="user-form" class="grid-form">
+          <label>Username<input id="new-user-name" required placeholder="username" /></label>
+          <label>Password<input id="new-user-pass" type="password" required placeholder="password" /></label>
+          <div class="row wide">
+            <label class="check">
+              <input type="checkbox" id="new-user-admin" />
+              <span>Hak Akses Admin</span>
+            </label>
+            <label class="check">
+              <input type="checkbox" id="new-user-seed" checked />
+              <span>Semai Agent &amp; Routing Default</span>
+            </label>
+          </div>
+          <div class="actions wide">
+            <button type="submit" class="primary">Tambah Pengguna</button>
+          </div>
+        </form>
+        <table id="user-table" class="table"></table>
+      </div>
     </section>
   </main>
 
@@ -238,6 +268,19 @@
       <label>Password<input id="login-pass" type="password" autocomplete="current-password" /></label>
       <p id="login-error" class="error"></p>
       <button class="primary" type="submit">Masuk</button>
+    </form>
+  </div>
+
+  <div id="password-modal" class="modal hidden">
+    <form class="modal-box" id="password-form">
+      <h2>Ganti Password</h2>
+      <label>Password Lama<input id="pass-old" type="password" required autocomplete="current-password" /></label>
+      <label>Password Baru<input id="pass-new" type="password" required autocomplete="new-password" /></label>
+      <p id="password-error" class="error"></p>
+      <div class="actions">
+        <button class="primary" type="submit">Simpan</button>
+        <button type="button" id="password-cancel" class="ghost">Batal</button>
+      </div>
     </form>
   </div>
 

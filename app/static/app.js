@@ -62,6 +62,7 @@ document.querySelectorAll(".tab").forEach((tab) => {
     if (tab.dataset.view === "agents") loadAgents();
     if (tab.dataset.view === "routing") loadRouting();
     if (tab.dataset.view === "workflows") loadWorkflows();
+    if (tab.dataset.view === "users") loadUsers();
   });
 });
 
@@ -849,13 +850,134 @@ $("approval-reject").addEventListener("click", async () => {
   }
 });
 
+/* ---------------- users & auth ui ---------------- */
+
+async function loadUsers() {
+  try {
+    const users = await api("/api/users");
+    const table = $("user-table");
+    if (!table) return;
+    table.innerHTML = "";
+    const head = table.insertRow();
+    ["ID", "Username", "Admin", "Dibuat Pada", "Aksi"].forEach((h) =>
+      head.appendChild(el("th", "", h))
+    );
+    users.forEach((u) => {
+      const row = table.insertRow();
+      row.insertCell().textContent = u.id;
+      row.insertCell().textContent = u.username;
+      row.insertCell().textContent = u.is_admin ? "Ya" : "Tidak";
+      row.insertCell().textContent = fmtTime(u.created_at);
+      const act = row.insertCell();
+      const delBtn = el("button", "ghost tiny danger", "Hapus");
+      delBtn.onclick = async () => {
+        if (!confirm(`Hapus pengguna '${u.username}'?`)) return;
+        try {
+          await api(`/api/users/${u.id}`, { method: "DELETE" });
+          loadUsers();
+        } catch (err) {
+          notify(err.message);
+        }
+      };
+      act.appendChild(delBtn);
+    });
+  } catch (err) {
+    notify(err.message);
+  }
+}
+
+if ($("user-form")) {
+  $("user-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const username = $("new-user-name").value.trim();
+    const password = $("new-user-pass").value;
+    const is_admin = $("new-user-admin").checked;
+    const seed_defaults = $("new-user-seed").checked;
+    try {
+      await api("/api/users", {
+        method: "POST",
+        body: JSON.stringify({ username, password, is_admin, seed_defaults }),
+      });
+      $("new-user-name").value = "";
+      $("new-user-pass").value = "";
+      notify(`User '${username}' berhasil dibuat`, "ok");
+      loadUsers();
+    } catch (err) {
+      notify(err.message);
+    }
+  });
+}
+
+if ($("change-pass-btn")) {
+  $("change-pass-btn").addEventListener("click", () => {
+    $("password-error").textContent = "";
+    $("pass-old").value = "";
+    $("pass-new").value = "";
+    $("password-modal").classList.remove("hidden");
+  });
+}
+
+if ($("password-cancel")) {
+  $("password-cancel").addEventListener("click", () => {
+    $("password-modal").classList.add("hidden");
+  });
+}
+
+if ($("password-form")) {
+  $("password-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    $("password-error").textContent = "";
+    const old_password = $("pass-old").value;
+    const new_password = $("pass-new").value;
+    try {
+      await api("/api/auth/password", {
+        method: "POST",
+        body: JSON.stringify({ old_password, new_password }),
+      });
+      $("password-modal").classList.add("hidden");
+      notify("Password berhasil diperbarui", "ok");
+    } catch (err) {
+      $("password-error").textContent = err.message;
+    }
+  });
+}
+
+if ($("logout-btn")) {
+  $("logout-btn").addEventListener("click", async () => {
+    try {
+      await api("/api/auth/logout", { method: "POST" });
+      location.reload();
+    } catch (err) {
+      notify(err.message);
+    }
+  });
+}
+
 /* ---------------- boot ---------------- */
 
 async function boot() {
   const status = await (await fetch("/api/auth/status")).json();
+  const userDisplay = $("user-display");
+  const logoutBtn = $("logout-btn");
+  const changePassBtn = $("change-pass-btn");
+  const tabUsers = $("tab-users");
+
   if (!status.auth_required) {
-    notify("Mode lokal tanpa login (CHOROS_ADMIN_PASSWORD_HASH belum diisi). Jangan expose port ini ke jaringan.");
+    notify(
+      "Mode lokal terbuka (CHOROS_ADMIN_PASSWORD_HASH kosong & belum ada user berpassword). Jangan expose port ini ke jaringan."
+    );
   }
+
+  if (status.username) {
+    if (userDisplay) userDisplay.textContent = `👤 ${status.username}`;
+    if (logoutBtn) logoutBtn.classList.remove("hidden");
+    if (changePassBtn) changePassBtn.classList.remove("hidden");
+  }
+
+  if (status.is_admin && tabUsers) {
+    tabUsers.classList.remove("hidden");
+  }
+
   try {
     await loadCategories();
     await loadAgents();

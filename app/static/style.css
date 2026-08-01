@@ -51,6 +51,9 @@ h1 { margin: 0; font-size: 18px; letter-spacing: .5px; }
 .tab:hover { color: var(--text); background: var(--panel-2); }
 .tab.active { color: var(--text); background: var(--panel-2); border-color: var(--line); }
 
+.user-bar { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+.user-display { font-weight: 500; color: var(--accent); font-size: 13px; }
+
 main { padding: 18px 20px 40px; }
 .view { display: none; }
 .view.active { display: block; }
