@@ -11,6 +11,26 @@ class LoginIn(BaseModel):
     password: str
 
 
+class PasswordChangeIn(BaseModel):
+    old_password: str
+    new_password: str
+
+
+class UserIn(BaseModel):
+    username: str = Field(max_length=64)
+    password: str
+    is_admin: bool = False
+    seed_defaults: bool = True
+
+
+class UserOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    username: str
+    is_admin: bool
+    created_at: datetime | None
+
+
 class AgentIn(BaseModel):
     name: str = Field(max_length=64)
     adapter_type: Literal["claude_code", "antigravity", "opencode", "openai_compatible"]
