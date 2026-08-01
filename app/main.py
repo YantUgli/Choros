@@ -40,20 +40,30 @@ async def lifespan(app: FastAPI):
         log.info("%d worktree lama dibersihkan oleh GC", len(cleaned_worktrees))
 
     async with SessionLocal() as session:
-        exists = (
+        admin_user = (
             await session.execute(select(User).where(User.username == settings.admin_username))
         ).scalar_one_or_none()
-        if exists is None:
-            session.add(User(username=settings.admin_username))
+        if admin_user is None:
+            admin_user = User(username=settings.admin_username, is_admin=True)
+            session.add(admin_user)
             await session.commit()
             log.info("user '%s' dibuat", settings.admin_username)
 
-    if auth_disabled():
-        log.warning(
-            "CHOROS_ADMIN_PASSWORD_HASH kosong → dashboard berjalan tanpa login. "
-            "Aman hanya kalau bind ke 127.0.0.1. Set hash lewat: "
-            "python -m scripts.hash_password 'passwordmu'"
-        )
+        # Promosikan admin_username jika belum ada admin sama sekali
+        has_admin = (
+            await session.execute(select(User.id).where(User.is_admin.is_(True)).limit(1))
+        ).first()
+        if has_admin is None and admin_user:
+            admin_user.is_admin = True
+            await session.commit()
+            log.info("user '%s' dipromosikan jadi admin", settings.admin_username)
+
+        if await auth_disabled(session):
+            log.warning(
+                "CHOROS_ADMIN_PASSWORD_HASH kosong → dashboard berjalan tanpa login. "
+                "Aman hanya kalau bind ke 127.0.0.1. Set hash lewat: "
+                "python -m scripts.hash_password 'passwordmu'"
+            )
 
     yield
 

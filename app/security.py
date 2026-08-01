@@ -50,9 +50,16 @@ def read_cookie(token: str) -> str | None:
     return data.get("u") if isinstance(data, dict) else None
 
 
-def auth_disabled() -> bool:
-    """Tanpa password hash, app jalan mode lokal terbuka (dengan peringatan)."""
-    return not get_settings().admin_password_hash
+async def auth_disabled(session: AsyncSession) -> bool:
+    """Tanpa password hash dan tanpa user berpassword di DB, app jalan mode lokal terbuka."""
+    if get_settings().admin_password_hash:
+        return False
+    has_password_user = (
+        await session.execute(
+            select(User.id).where(User.password_hash.isnot(None)).limit(1)
+        )
+    ).first()
+    return has_password_user is None
 
 
 async def get_current_user(
@@ -62,7 +69,7 @@ async def get_current_user(
     settings = get_settings()
     username = settings.admin_username
 
-    if not auth_disabled():
+    if not await auth_disabled(session):
         token = request.cookies.get(COOKIE_NAME)
         resolved = read_cookie(token) if token else None
         if not resolved:
@@ -79,5 +86,14 @@ async def get_current_user(
     return user
 
 
+async def get_current_admin(user: CurrentUser) -> User:
+    if not user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="butuh hak admin"
+        )
+    return user
+
+
 CurrentUser = Annotated[User, Depends(get_current_user)]
+CurrentAdmin = Annotated[User, Depends(get_current_admin)]
 DbSession = Annotated[AsyncSession, Depends(get_session)]
