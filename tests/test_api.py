@@ -9,6 +9,7 @@ from app.models import (
     RoutingRule,
     Task,
     TaskEvent,
+    User,
     Workflow,
     WorkflowRun,
     WorkflowStep,
@@ -291,3 +292,322 @@ async def test_cookie_auth_flow(monkeypatch, user):
         monkeypatch.delenv("CHOROS_ADMIN_PASSWORD_HASH", raising=False)
         get_settings.cache_clear()
 
+
+@pytest.mark.asyncio
+async def test_b1_auth_disabled_vulnerability_with_db_users(monkeypatch):
+    """B1: Ada user ber-password_hash tapi env hash kosong -> GET /api/tasks tanpa cookie 401, bukan 200."""
+    from app.config import get_settings
+    monkeypatch.delenv("CHOROS_ADMIN_PASSWORD_HASH", raising=False)
+    get_settings.cache_clear()
+
+    async with SessionLocal() as session:
+        user_with_pwd = User(username="user_pass", password_hash="$2b$12$somehash")
+        session.add(user_with_pwd)
+        await session.commit()
+
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            res = await client.get("/api/tasks")
+            assert res.status_code == 401
+    finally:
+        get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_b3_login_table_user():
+    """B3: Login user tabel: password benar 200 + cookie; password salah 401."""
+    from app.security import COOKIE_NAME, hash_password
+    async with SessionLocal() as session:
+        user_table = User(username="table_bob", password_hash=hash_password("bobsecret"))
+        session.add(user_table)
+        await session.commit()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        res1 = await client.post("/api/auth/login", json={"username": "table_bob", "password": "wrongpassword"})
+        assert res1.status_code == 401
+
+        res2 = await client.post("/api/auth/login", json={"username": "table_bob", "password": "bobsecret"})
+        assert res2.status_code == 200
+        assert res2.json()["ok"] is True
+        assert COOKIE_NAME in res2.cookies
+
+
+@pytest.mark.asyncio
+async def test_b4_user_without_password_cannot_login_with_admin_password(monkeypatch):
+    """B4: User ada di tabel tanpa password_hash, bukan admin_username -> login memakai password admin ditolak."""
+    from app.config import get_settings
+    from app.security import hash_password
+    monkeypatch.setenv("CHOROS_ADMIN_PASSWORD_HASH", hash_password("adminpass"))
+    get_settings.cache_clear()
+
+    async with SessionLocal() as session:
+        user_no_pass = User(username="nopass_guy", password_hash=None)
+        session.add(user_no_pass)
+        await session.commit()
+
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            res = await client.post("/api/auth/login", json={"username": "nopass_guy", "password": "adminpass"})
+            assert res.status_code == 401
+    finally:
+        get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_b5_user_management_authorization():
+    """B5: Non-admin POST /api/users -> 403; admin -> 201."""
+    from app.security import get_current_user, hash_password
+    async with SessionLocal() as session:
+        admin_u = User(username="admin_guy", password_hash=hash_password("p"), is_admin=True)
+        normal_u = User(username="normal_guy", password_hash=hash_password("p"), is_admin=False)
+        session.add_all([admin_u, normal_u])
+        await session.commit()
+
+    app.dependency_overrides[get_current_user] = lambda: normal_u
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            res = await client.post("/api/users", json={"username": "u1", "password": "p", "is_admin": False})
+            assert res.status_code == 403
+    finally:
+        app.dependency_overrides.clear()
+
+    app.dependency_overrides[get_current_user] = lambda: admin_u
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            res = await client.post("/api/users", json={"username": "u2", "password": "p", "is_admin": False})
+            assert res.status_code == 201
+            data = res.json()
+            assert data["username"] == "u2"
+            assert data["is_admin"] is False
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_b6_new_user_has_own_defaults_and_isolated_targets():
+    """B6: User baru punya agent + routing rule sendiri; resolve_targets tidak kosong dan tidak beririsan."""
+    from app.orchestrator.router import resolve_targets
+    from app.security import get_current_user, hash_password
+
+    async with SessionLocal() as session:
+        admin_u = User(username="admin_b6", password_hash=hash_password("p"), is_admin=True)
+        session.add(admin_u)
+        await session.commit()
+
+    app.dependency_overrides[get_current_user] = lambda: admin_u
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            res1 = await client.post("/api/users", json={"username": "user1_b6", "password": "p", "seed_defaults": True})
+            res2 = await client.post("/api/users", json={"username": "user2_b6", "password": "p", "seed_defaults": True})
+            u1_id = res1.json()["id"]
+            u2_id = res2.json()["id"]
+    finally:
+        app.dependency_overrides.clear()
+
+    async with SessionLocal() as session:
+        targets_u1 = await resolve_targets(session, "coding_complex", user_id=u1_id)
+        targets_u2 = await resolve_targets(session, "coding_complex", user_id=u2_id)
+
+        assert len(targets_u1) > 0
+        assert len(targets_u2) > 0
+
+        u1_agent_ids = {t.agent.id for t in targets_u1}
+        u2_agent_ids = {t.agent.id for t in targets_u2}
+        assert u1_agent_ids.isdisjoint(u2_agent_ids)
+
+
+@pytest.mark.asyncio
+async def test_b7_auth_status_returns_logged_in_username(monkeypatch):
+    """B7: GET /api/auth/status mengembalikan username yang login, bukan admin_username."""
+    from app.config import get_settings
+    from app.security import COOKIE_NAME, hash_password, issue_cookie
+
+    monkeypatch.setenv("CHOROS_ADMIN_PASSWORD_HASH", hash_password("adminpass"))
+    get_settings.cache_clear()
+
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            res1 = await client.get("/api/auth/status")
+            assert res1.status_code == 200
+            assert res1.json()["auth_required"] is True
+            assert res1.json()["username"] is None
+
+            client.cookies.set(COOKIE_NAME, issue_cookie("custom_user"))
+            res2 = await client.get("/api/auth/status")
+            assert res2.status_code == 200
+            assert res2.json()["username"] == "custom_user"
+    finally:
+        get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_b8_list_users_never_exposes_password_hash():
+    """B8: GET /api/users tidak pernah memuat password_hash di body."""
+    from app.security import get_current_user, hash_password
+    async with SessionLocal() as session:
+        admin_u = User(username="admin_b8", password_hash=hash_password("p1"), is_admin=True)
+        normal_u = User(username="user_b8", password_hash=hash_password("p2"), is_admin=False)
+        session.add_all([admin_u, normal_u])
+        await session.commit()
+
+    app.dependency_overrides[get_current_user] = lambda: admin_u
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            res = await client.get("/api/users")
+            assert res.status_code == 200
+            users = res.json()
+            assert len(users) >= 2
+            for u in users:
+                assert "password_hash" not in u
+                assert "password" not in u
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_b9_delete_last_admin_rejected():
+    """B9: Hapus admin terakhir ditolak."""
+    from app.security import get_current_user, hash_password
+    async with SessionLocal() as session:
+        only_admin = User(username="sole_admin", password_hash=hash_password("p"), is_admin=True)
+        session.add(only_admin)
+        await session.commit()
+
+    app.dependency_overrides[get_current_user] = lambda: only_admin
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            res_list = await client.get("/api/users")
+            admins = [u for u in res_list.json() if u["is_admin"] and u["id"] != only_admin.id]
+            for adm in admins:
+                await client.delete(f"/api/users/{adm['id']}")
+
+            res = await client.delete(f"/api/users/{only_admin.id}")
+            assert res.status_code == 400
+            assert "admin terakhir" in res.json()["detail"]
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_c1_auth_status_admin_cookie(monkeypatch):
+    """C1: /api/auth/status untuk user admin ber-cookie sah -> is_admin: true"""
+    from app.config import get_settings
+    from app.security import COOKIE_NAME, hash_password, issue_cookie
+    
+    monkeypatch.setenv("CHOROS_ADMIN_PASSWORD_HASH", hash_password("adminpass"))
+    get_settings.cache_clear()
+    
+    async with SessionLocal() as session:
+        admin_u = User(username="c1_admin", password_hash="dummy", is_admin=True)
+        session.add(admin_u)
+        await session.commit()
+    
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            client.cookies.set(COOKIE_NAME, issue_cookie("c1_admin"))
+            res = await client.get("/api/auth/status")
+            assert res.status_code == 200
+            assert res.json()["is_admin"] is True
+    finally:
+        get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_c2_auth_status_non_admin_cookie(monkeypatch):
+    """C2: /api/auth/status untuk user non-admin ber-cookie sah -> is_admin: false"""
+    from app.config import get_settings
+    from app.security import COOKIE_NAME, hash_password, issue_cookie
+    
+    monkeypatch.setenv("CHOROS_ADMIN_PASSWORD_HASH", hash_password("adminpass"))
+    get_settings.cache_clear()
+    
+    async with SessionLocal() as session:
+        normal_u = User(username="c2_user", password_hash="dummy", is_admin=False)
+        session.add(normal_u)
+        await session.commit()
+    
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            client.cookies.set(COOKIE_NAME, issue_cookie("c2_user"))
+            res = await client.get("/api/auth/status")
+            assert res.status_code == 200
+            assert res.json()["is_admin"] is False
+    finally:
+        get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_c3_auth_status_no_cookie(monkeypatch):
+    """C3: /api/auth/status tanpa cookie (mode berpassword) -> 200, username: null, is_admin: false"""
+    from app.config import get_settings
+    from app.security import hash_password
+    
+    monkeypatch.setenv("CHOROS_ADMIN_PASSWORD_HASH", hash_password("adminpass"))
+    get_settings.cache_clear()
+    
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            res = await client.get("/api/auth/status")
+            assert res.status_code == 200
+            data = res.json()
+            assert data["username"] is None
+            assert data["is_admin"] is False
+    finally:
+        get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_c4_auth_status_contract(monkeypatch):
+    """C4: Body /api/auth/status memuat ketiga kunci auth_required, username, is_admin"""
+    from app.config import get_settings
+    from app.security import hash_password
+    
+    monkeypatch.setenv("CHOROS_ADMIN_PASSWORD_HASH", hash_password("adminpass"))
+    get_settings.cache_clear()
+    
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            res = await client.get("/api/auth/status")
+            assert res.status_code == 200
+            data = res.json()
+            keys = list(data.keys())
+            assert "auth_required" in keys
+            assert "username" in keys
+            assert "is_admin" in keys
+    finally:
+        get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_c5_seed_defaults_new_user():
+    """C5: seed_defaults mengembalikan SeedReport dengan 6 agent + 23 route saat user baru"""
+    from app.defaults import seed_defaults
+    
+    async with SessionLocal() as session:
+        user = User(username="c5_user", is_admin=False)
+        session.add(user)
+        await session.flush()
+        
+        report = await seed_defaults(session, user)
+        assert len(report.agents_added) == 6
+        assert len(report.routes_added) == 23
+        assert len(report.routes_reconciled) == 0
+
+
+@pytest.mark.asyncio
+async def test_c6_seed_defaults_idempotent():
+    """C6: seed_defaults dipanggil dua kali -> nol tambahan"""
+    from app.defaults import seed_defaults
+    
+    async with SessionLocal() as session:
+        user = User(username="c6_user", is_admin=False)
+        session.add(user)
+        await session.flush()
+        
+        report1 = await seed_defaults(session, user)
+        assert len(report1.agents_added) == 6
+        
+        report2 = await seed_defaults(session, user)
+        assert len(report2.agents_added) == 0
+        assert len(report2.routes_added) == 0
+        assert len(report2.routes_reconciled) == 0
