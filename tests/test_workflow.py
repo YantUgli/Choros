@@ -105,7 +105,7 @@ async def create_and_run_workflow(user, steps_config, goal="test goal", project_
 def setup_fake_adapter(monkeypatch):
     FakeAdapter.calls.clear()
 
-    def fake_build(agent, override_behavior=None):
+    def fake_build(agent, override_behavior=None, **kwargs):
         cfg = (agent.config or {}).copy()
         if override_behavior:
             cfg["behaviour"] = override_behavior
@@ -135,7 +135,8 @@ async def test_two_step_run_handoff_artifact(user, make_agent, make_route):
 
     async with SessionLocal() as session:
         run = await session.get(WorkflowRun, run_id)
-        assert run.current_step == 1
+        task1 = await session.get(Task, task1_id)
+        assert run.current_step == 1, f"run: {run.status}, task1: {task1.status}, out: {task1.final_output}"
         assert run.status == "running"
 
         res = await session.execute(

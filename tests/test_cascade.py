@@ -454,8 +454,9 @@ async def test_d7_cascade_passes_home_to_build_adapter(user_b, make_agent, make_
     own = await make_agent("own", behaviour="ok")
     await make_route("coding_complex", own, priority=10)
     
-    from app.db import SessionLocal
     async with SessionLocal() as session:
+        session.add(own)
+        own.user_id = user_b.id
         user_b.credential_home = "/custom/home/user_b"
         session.add(user_b)
         await session.commit()
