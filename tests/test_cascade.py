@@ -25,8 +25,9 @@ class FakeAdapter:
 
     calls: list[dict] = []
 
-    def __init__(self, *, name, config=None, default_model=None, base_url=None, timeout=60):
+    def __init__(self, *, name, config=None, default_model=None, base_url=None, timeout=60, home=None):
         self.name = name
+        self.home = home
         self.config = config or {}
         self.default_model = default_model
         self.behaviour = (self.config or {}).get("behaviour", "ok")
@@ -49,6 +50,7 @@ class FakeAdapter:
                 "permission_mode": permission_mode,
                 "project_path": project_path,
                 "resume_session_id": resume_session_id,
+                "home": self.home,
             }
         )
         yield Event.status("session dimulai", session_id=f"sess-{self.name}")
@@ -70,8 +72,8 @@ def fake_adapters(monkeypatch):
     monkeypatch.setattr(
         runner_module,
         "build_adapter",
-        lambda agent, timeout=None: FakeAdapter(
-            name=agent.name, config=agent.config, default_model=agent.default_model
+        lambda agent, timeout=None, home=None: FakeAdapter(
+            name=agent.name, config=agent.config, default_model=agent.default_model, home=home
         ),
     )
     # semua adapter fake dianggap punya tangan
@@ -445,3 +447,27 @@ async def test_usage_recorded_for_task_owner_not_agent_owner(user, user_b, tmp_p
     assert {r.user_id for r in rows} == {user.id}
     assert sum(r.tokens_used for r in rows) == 150
 
+
+
+async def test_d7_cascade_passes_home_to_build_adapter(user_b, make_agent, make_route):
+    """D7: Task milik user ber-credential_home -> build_adapter menerima home itu"""
+    own = await make_agent("own", behaviour="ok")
+    await make_route("coding_complex", own, priority=10)
+    
+    from app.db import SessionLocal
+    async with SessionLocal() as session:
+        user_b.credential_home = "/custom/home/user_b"
+        session.add(user_b)
+        await session.commit()
+
+    FakeAdapter.calls = []
+    
+    await run_task(
+        user_id=user_b.id,
+        category="coding_complex",
+        prompt="test home cascade",
+        mode="safe",
+    )
+    
+    assert len(FakeAdapter.calls) == 1
+    assert FakeAdapter.calls[0]["home"] == "/custom/home/user_b"

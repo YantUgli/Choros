@@ -36,6 +36,7 @@ class OpenAICompatAdapter:
         default_model: str | None = None,
         base_url: str | None = None,
         timeout: int = 1800,
+        home: str | None = None,
     ) -> None:
         self.name = name
         self.config = config or {}
@@ -43,6 +44,7 @@ class OpenAICompatAdapter:
         self.base_url = (base_url or "https://api.openai.com/v1").rstrip("/")
         self.timeout = timeout
         self.session_id: str | None = None
+        self.home = home
 
     def is_installed(self) -> bool:
         return bool(self._api_key()) or bool(self.config.get("allow_keyless"))

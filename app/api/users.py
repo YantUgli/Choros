@@ -26,10 +26,17 @@ async def create_user(
             detail="username sudah digunakan",
         )
 
+    from pathlib import Path
+    from app.config import get_settings
+    settings = get_settings()
+    home = Path(settings.credential_root) / payload.username
+    home.mkdir(parents=True, exist_ok=True)
+
     user = User(
         username=payload.username,
         password_hash=hash_password(payload.password),
         is_admin=payload.is_admin,
+        credential_home=str(home),
     )
     session.add(user)
     await session.flush()

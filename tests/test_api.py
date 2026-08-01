@@ -611,3 +611,42 @@ async def test_c6_seed_defaults_idempotent():
         assert len(report2.agents_added) == 0
         assert len(report2.routes_added) == 0
         assert len(report2.routes_reconciled) == 0
+
+
+@pytest.mark.asyncio
+async def test_d5_post_users_sets_credential_home(admin_client):
+    """D5: POST /api/users mengisi credential_home dan direktorinya benar-benar dibuat"""
+    from pathlib import Path
+    from app.config import get_settings
+    
+    res = await admin_client.post(
+        "/api/users",
+        json={"username": "d5_user", "password": "abc", "is_admin": False, "seed_defaults": False}
+    )
+    assert res.status_code == 201
+    
+    from app.db import SessionLocal
+    from app.models import User
+    from sqlalchemy import select
+    
+    async with SessionLocal() as session:
+        user = (await session.execute(select(User).where(User.username == "d5_user"))).scalar_one()
+        assert user.credential_home is not None
+        home_path = Path(user.credential_home)
+        assert home_path.exists()
+        assert home_path.is_dir()
+        
+        settings = get_settings()
+        assert str(home_path) == str(Path(settings.credential_root) / "d5_user")
+
+
+@pytest.mark.asyncio
+async def test_d6_bootstrap_admin_credential_home_is_null():
+    """D6: Admin bootstrap tetap ber-credential_home NULL"""
+    from app.db import SessionLocal
+    from app.models import User
+    from sqlalchemy import select
+    
+    async with SessionLocal() as session:
+        admin = (await session.execute(select(User).where(User.username == "tester"))).scalar_one()
+        assert admin.credential_home is None

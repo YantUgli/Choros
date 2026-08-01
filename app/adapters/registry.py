@@ -32,7 +32,9 @@ class UnknownAdapterError(ValueError):
     pass
 
 
-def build_adapter(agent: Agent, *, timeout: int | None = None) -> AgentAdapter:
+def build_adapter(
+    agent: Agent, *, timeout: int | None = None, home: str | None = None
+) -> AgentAdapter:
     cls = ADAPTERS.get(agent.adapter_type)
     if cls is None:
         raise UnknownAdapterError(
@@ -45,6 +47,7 @@ def build_adapter(agent: Agent, *, timeout: int | None = None) -> AgentAdapter:
         default_model=agent.default_model,
         base_url=agent.base_url,
         timeout=timeout or settings.run_timeout,
+        home=home,
     )
 
 

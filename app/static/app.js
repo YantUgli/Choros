@@ -6,7 +6,8 @@ const state = {
   stream: null,
   agents: [],
   categories: [],
-  partialLine: null, // elemen <span> untuk menggabung delta token
+  partialLine: null,
+  currentUser: null,
 };
 
 /* ---------------- util ---------------- */
@@ -407,6 +408,18 @@ async function loadAgents() {
   const ruleAgent = $("rule-agent");
   ruleAgent.innerHTML = "";
   state.agents.forEach((a) => ruleAgent.appendChild(new Option(`${a.name} (${a.adapter_type})`, a.id)));
+
+  const guidePanel = $("login-guide-panel");
+  if (guidePanel) {
+    if (state.currentUser && state.currentUser.credential_home) {
+      guidePanel.classList.remove("hidden");
+      const h = state.currentUser.credential_home;
+      $("login-guide-code").textContent = 
+        `# Claude Code\nHOME="${h}" claude login\n\n# OpenCode\nHOME="${h}" opencode login\n\n# Antigravity\nHOME="${h}" agy login`;
+    } else {
+      guidePanel.classList.add("hidden");
+    }
+  }
 }
 
 function fillAgentForm(agent) {
@@ -957,6 +970,7 @@ if ($("logout-btn")) {
 
 async function boot() {
   const status = await (await fetch("/api/auth/status")).json();
+  state.currentUser = status;
   const userDisplay = $("user-display");
   const logoutBtn = $("logout-btn");
   const changePassBtn = $("change-pass-btn");

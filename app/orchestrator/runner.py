@@ -27,7 +27,7 @@ from app.adapters.registry import adapter_can_execute, build_adapter
 from app.config import get_settings
 from app.db import session_scope
 from app.events import ERROR_RATE_LIMIT, Event
-from app.models import Agent, Task, TaskEvent, TaskLog
+from app.models import Agent, Task, TaskEvent, TaskLog, User
 from app.orchestrator import quota
 from app.orchestrator.bus import bus
 from app.orchestrator.isolation import (
@@ -72,6 +72,7 @@ class RunContext:
     workspace: Workspace
     plan_artifact: str | None = None
     resume_session_id: str | None = None
+    credential_home: str | None = None
 
 
 @dataclass(slots=True)
@@ -182,6 +183,8 @@ class TaskRunner:
 
             # user_id dibaca lebih dulu: routing wajib disaring pemilik tugas
             user_id = task.user_id
+            owner = await session.get(User, user_id)
+            credential_home = owner.credential_home if owner else None
             targets = await resolve_targets(session, task.category, user_id=user_id)
             category = task.category
             mode = task.mode
@@ -291,6 +294,7 @@ class TaskRunner:
             workspace=workspace,
             plan_artifact=plan_artifact,
             resume_session_id=resume_session_id,
+            credential_home=credential_home,
         )
 
         try:
@@ -405,6 +409,7 @@ class TaskRunner:
                 permission_mode=ctx.permission_mode,
                 workspace=ctx.workspace,
                 resume_session_id=attempt_resume,
+                credential_home=ctx.credential_home,
             )
 
             await self._log_attempt(
@@ -457,9 +462,10 @@ class TaskRunner:
         permission_mode: str,
         workspace: Workspace,
         resume_session_id: str | None = None,
+        credential_home: str | None = None,
     ) -> Attempt:
         attempt = Attempt(target=target)
-        adapter = build_adapter(agent)
+        adapter = build_adapter(agent, home=credential_home)
 
         handle = self._running.get(task_id)
         if handle is not None:

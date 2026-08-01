@@ -95,6 +95,7 @@ class BaseCliAdapter:
         default_model: str | None = None,
         base_url: str | None = None,
         timeout: int = 1800,
+        home: str | None = None,
     ) -> None:
         self.name = name
         self.config = config or {}
@@ -103,6 +104,7 @@ class BaseCliAdapter:
         self.timeout = timeout
         self.session_id: str | None = None
         self._proc: asyncio.subprocess.Process | None = None
+        self.home = home
 
     # ---------- hook subclass ----------
 
@@ -131,6 +133,18 @@ class BaseCliAdapter:
 
     def env_overrides(self) -> dict[str, str]:
         return {}
+
+    def build_env(self) -> dict[str, str]:
+        """Environment untuk subprocess harness.
+
+        `home` diisi hanya kalau user punya credential_home. HOME kosong berarti
+        warisi environment server — perilaku single-user sejak Fase 1.
+        """
+        env = {**os.environ, **self.env_overrides()}
+        if self.home:
+            env["HOME"] = self.home
+            env["USERPROFILE"] = self.home  # Windows membaca ini, bukan HOME
+        return env
 
     def prompt_via_stdin(self) -> str | None:
         """Kalau harness menerima prompt lewat stdin, kembalikan payload-nya."""
@@ -188,7 +202,7 @@ class BaseCliAdapter:
             project_path=project_path,
             resume_session_id=resume_session_id,
         )
-        env = {**os.environ, **self.env_overrides()}
+        env = self.build_env()
         stderr_chunks: list[str] = []
 
         try:

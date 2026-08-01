@@ -126,24 +126,14 @@ hasil, bukan mengulanginya di log.
   multi-step, artefak handoff, dan checkpoint approval sudah jalan (`3f74978`
   beserta rangkaian penutupannya). Yang masih menganggur hanya verifikasi manual
   lewat browser, `rencana-penutupan-fase4.md` §6.
-- **Fase 5 (mode tim)** — belum. Isolasi credential store per-user belum ada:
-  `adapters/base.py` mewariskan `os.environ` apa adanya ke subprocess, jadi
-  semua tugas milik semua user memakai `HOME` — dan karenanya kredensial
-  langganan — yang sama.
+- **Fase 5 (mode tim)** — **selesai.** Isolasi kredensial per-user diimplementasikan
+  dengan menyediakan `credential_home` terpisah (contoh: `~/.choros/homes/<username>`)
+  sebagai `HOME` dan `USERPROFILE` untuk subprocess langganan (Claude/AGY/OpenCode).
 
-  **Koreksi terhadap versi sebelumnya dokumen ini.** Kalimat "semua query sudah
-  tersaring `user_id`" salah, dan bertahan lima fase. Boundary memang ditegakkan
-  di lapisan API, tapi runner memakai jalur query terpisah yang tidak menyaring
-  pemilik sama sekali: `resolve_targets` menjoin `routing_rules → agents` tanpa
-  filter pemilik, dan runner memanggilnya tanpa identitas. Akibatnya tugas user A
-  dirutekan ke agent user B — pooling, yang PRD §1 daftarkan sebagai non-tujuan
-  eksplisit. Ditutup di Fase 5a (`c096cbb`); rinciannya di `rencana-fase5.md` §2.
-
-  Yang perlu diingat bukan "ada bug", melainkan **dari mana klaim status itu
-  ditulis**: dari membaca lapisan API saja. `GET /api/routing` memang menyaring
-  dengan benar, jadi dashboard tidak pernah membocorkan apa pun — dan lapisan
-  yang benar-benar mengeksekusi tidak pernah diperiksa, tanpa satu pun test
-  menembusnya. Jangan pakai multi-user sebelum 5b–5c selesai.
+  **Catatan Penting Batas Isolasi:** Kunci API mentah yang disetel via environment
+  variable server (seperti `GROQ_API_KEY`, `OPENAI_API_KEY`) BUKAN milik individual user 
+  dan BUKAN di bawah kendali isolasi Choros. Isolasi hanya berlaku pada sesi CLI langganan 
+  yang membaca kredensial dan preferensi dari direktori `HOME` atau `USERPROFILE` tersebut.
 - **Klasifikasi LLM (PRD §5 v2)** — masih dropdown + keyword.
 - **`ensure_trusted` untuk opencode** — opencode tidak punya konsep trust folder;
   izin ditangani per-run lewat `--auto`, sengaja tidak menulis permission wildcard

@@ -20,6 +20,7 @@ class Settings(BaseSettings):
 
     default_project_path: str = str(Path.home())
     isolation_root: str = str(Path.home() / ".choros" / "worktrees")
+    credential_root: str = str(Path.home() / ".choros" / "homes")
     run_timeout: int = 1800
 
     # cooldown default saat kena 429 tanpa header reset (menit)

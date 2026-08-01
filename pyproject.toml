@@ -42,3 +42,6 @@ lint.ignore = [
     "S105",   # hardcoded password dummy
     "SIM105", # try-except-pass yang valid
 ]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["F401", "S106", "S108", "S607"]
