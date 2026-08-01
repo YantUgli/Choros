@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     # cooldown default saat kena 429 tanpa header reset (menit)
     default_cooldown_minutes: int = 60
 
+    # batas konkurensi tugas berjalan bersamaan
+    max_concurrent_tasks: int = 3
+
     @property
     def sync_database_url(self) -> str:
         return self.database_url.replace("+asyncpg", "")

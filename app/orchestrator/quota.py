@@ -27,7 +27,7 @@ def now() -> datetime:
     return datetime.now(UTC)
 
 
-async def _current_window(
+async def _get_cooldown_window(
     session: AsyncSession,
     *,
     user_id: int,
@@ -40,26 +40,54 @@ async def _current_window(
             QuotaWindow.user_id == user_id,
             QuotaWindow.agent_id == agent_id,
             QuotaWindow.model.is_(None) if model is None else QuotaWindow.model == model,
+            QuotaWindow.window_type == "cooldown",
         )
         .order_by(QuotaWindow.window_end.desc().nullslast(), QuotaWindow.id.desc())
         .limit(1)
     )
     window = (await session.execute(stmt)).scalar_one_or_none()
-    if window is None:
+    if window is None or (window.window_end is not None and window.window_end <= now()):
         return None
-    if window.window_end is not None and window.window_end <= now():
-        return None  # window kadaluarsa → dianggap reset
+    return window
+
+
+async def _get_token_window(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    agent_id: int,
+    model: str | None,
+) -> QuotaWindow | None:
+    stmt = (
+        select(QuotaWindow)
+        .where(
+            QuotaWindow.user_id == user_id,
+            QuotaWindow.agent_id == agent_id,
+            QuotaWindow.model.is_(None) if model is None else QuotaWindow.model == model,
+            QuotaWindow.window_type != "cooldown",
+        )
+        .order_by(QuotaWindow.window_end.desc().nullslast(), QuotaWindow.id.desc())
+        .limit(1)
+    )
+    window = (await session.execute(stmt)).scalar_one_or_none()
+    if window is None or (window.window_end is not None and window.window_end <= now()):
+        return None
     return window
 
 
 async def is_exhausted(
     session: AsyncSession, *, user_id: int, agent_id: int, model: str | None
 ) -> tuple[bool, datetime | None]:
-    """(mentok?, kapan reset). Window yang sudah lewat otomatis dianggap pulih."""
-    window = await _current_window(session, user_id=user_id, agent_id=agent_id, model=model)
-    if window is None or not window.is_exhausted:
-        return False, None
-    return True, window.window_end
+    """(mentok?, kapan reset). Cooldown 429 atau token limit yang aktif."""
+    cooldown = await _get_cooldown_window(session, user_id=user_id, agent_id=agent_id, model=model)
+    if cooldown is not None:
+        return True, cooldown.window_end
+
+    token_win = await _get_token_window(session, user_id=user_id, agent_id=agent_id, model=model)
+    if token_win is not None and token_win.is_exhausted:
+        return True, token_win.window_end
+
+    return False, None
 
 
 async def mark_exhausted(
@@ -71,16 +99,17 @@ async def mark_exhausted(
     retry_after_seconds: float | None = None,
     default_cooldown_minutes: int = 60,
 ) -> QuotaWindow:
-    """Tandai target mentok + pasang cooldown (PRD §10)."""
-    cooldown = (
+    """Tandai target mentok dengan membuat/memperbarui window 'cooldown' terpisah."""
+    cooldown_sec = (
         timedelta(seconds=retry_after_seconds)
         if retry_after_seconds
         else timedelta(minutes=default_cooldown_minutes)
     )
-    window = await _current_window(session, user_id=user_id, agent_id=agent_id, model=model)
-    reset_at = now() + cooldown
-    if window is None:
-        window = QuotaWindow(
+    reset_at = now() + cooldown_sec
+
+    cooldown = await _get_cooldown_window(session, user_id=user_id, agent_id=agent_id, model=model)
+    if cooldown is None:
+        cooldown = QuotaWindow(
             user_id=user_id,
             agent_id=agent_id,
             model=model,
@@ -90,14 +119,13 @@ async def mark_exhausted(
             tokens_used=0,
             is_exhausted=True,
         )
-        session.add(window)
+        session.add(cooldown)
     else:
-        window.is_exhausted = True
-        # cooldown tidak boleh memperpendek window yang sudah berjalan
-        if window.window_end is None or window.window_end < reset_at:
-            window.window_end = reset_at
+        cooldown.window_end = reset_at
+        cooldown.is_exhausted = True
+
     await session.flush()
-    return window
+    return cooldown
 
 
 async def record_usage(
@@ -109,8 +137,8 @@ async def record_usage(
     tokens: int,
     window_type: str = "daily",
 ) -> QuotaWindow:
-    """Akumulasi token ke window aktif; buat window baru kalau sudah lewat."""
-    window = await _current_window(session, user_id=user_id, agent_id=agent_id, model=model)
+    """Akumulasi token ke window konsumsi aktif (bukan cooldown); buat window baru jika lewat."""
+    window = await _get_token_window(session, user_id=user_id, agent_id=agent_id, model=model)
     if window is None:
         start = now()
         window = QuotaWindow(
@@ -133,11 +161,15 @@ async def clear_exhausted(
     session: AsyncSession, *, user_id: int, agent_id: int, model: str | None
 ) -> None:
     """Reset manual dari dashboard ('saya yakin kuotanya sudah pulih')."""
-    window = await _current_window(session, user_id=user_id, agent_id=agent_id, model=model)
-    if window is not None:
-        window.is_exhausted = False
-        window.window_end = now()
-        await session.flush()
+    cooldown = await _get_cooldown_window(session, user_id=user_id, agent_id=agent_id, model=model)
+    if cooldown is not None:
+        cooldown.is_exhausted = False
+        cooldown.window_end = now()
+
+    token_win = await _get_token_window(session, user_id=user_id, agent_id=agent_id, model=model)
+    if token_win is not None:
+        token_win.is_exhausted = False
+    await session.flush()
 
 
 async def list_windows(session: AsyncSession, *, user_id: int) -> list[QuotaWindow]:

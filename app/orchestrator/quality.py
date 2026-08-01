@@ -20,13 +20,33 @@ TIER_LIGHT = 10  # draft/bulk
 TIER_UNKNOWN = 15  # default konservatif untuk model tak dikenal
 
 _PATTERNS: list[tuple[re.Pattern[str], int]] = [
-    (re.compile(r"opus", re.I), TIER_FRONTIER),
-    (re.compile(r"gpt-5|o[34](-|$)|gemini-3\.5-pro|gemini-3-pro", re.I), TIER_FRONTIER),
-    (re.compile(r"sonnet", re.I), TIER_STRONG),
-    (re.compile(r"gemini-.*-pro|gpt-4\.1|gpt-4o(?!-mini)", re.I), TIER_STRONG),
-    (re.compile(r"llama-?3\.[13]-70b|llama-?3\.3|qwen.*(72b|coder-32b)|deepseek", re.I), TIER_STRONG),
-    (re.compile(r"gemini-.*flash|haiku|gpt-oss-120b|mixtral", re.I), TIER_MID),
-    (re.compile(r"gpt-oss-20b|llama-?3\.[12]-8b|8b|7b|mini|small|lite", re.I), TIER_LIGHT),
+    (re.compile(r"opus", re.IGNORECASE), TIER_FRONTIER),
+    (re.compile(r"gpt-5|o[34](-|$)|gemini-3\.5-pro|gemini-3-pro", re.IGNORECASE), TIER_FRONTIER),
+    (re.compile(r"sonnet", re.IGNORECASE), TIER_STRONG),
+    (re.compile(r"gemini-.*-pro|gpt-4\.1|gpt-4o(?!-mini)", re.IGNORECASE), TIER_STRONG),
+    (re.compile(r"llama-?3\.[13]-70b|llama-?3\.3|qwen.*(72b|coder-32b)|deepseek", re.IGNORECASE), TIER_STRONG),
+    # OpenCode Zen — kelas atas dari daftar gratisnya.
+    (
+        re.compile(
+            r"^(glm-\d|minimax-m\d|kimi-k\d|qwen3\.\d+-plus|ring-[\d.]+-1t"
+            r"|mimo-v\d+-pro|nemotron-\d+-ultra|grok-code)",
+            re.IGNORECASE,
+        ),
+        TIER_STRONG,
+    ),
+    (re.compile(r"gemini-.*flash|haiku|gpt-oss-120b|mixtral", re.IGNORECASE), TIER_MID),
+    # OpenCode Zen — kelas menengah. Harus di atas pola TIER_LIGHT: nama seperti
+    # "minimax-*" dan "north-mini-code-*" mengandung "mini" dan akan salah turun
+    # ke TIER_LIGHT kalau pola generik di bawah yang menangkap duluan.
+    (
+        re.compile(
+            r"^(big-pickle|ling-[\d.]+-flash|mimo-v[\d.]+|laguna-s|hy3"
+            r"|north-mini-code|nemotron-\d+-super|trinity-large)",
+            re.IGNORECASE,
+        ),
+        TIER_MID,
+    ),
+    (re.compile(r"gpt-oss-20b|llama-?3\.[12]-8b|8b|7b|mini|small|lite", re.IGNORECASE), TIER_LIGHT),
 ]
 
 

@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import asyncio
 import shutil
+import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from app.config import get_settings
 
@@ -98,3 +100,102 @@ async def cleanup_workspace(project_path: str, workspace: Workspace, *, remove: 
         return None
     code, out = await _run("git", "-C", project_path, "worktree", "remove", "--force", workspace.path)
     return None if code == 0 else out
+
+
+async def get_workspace_diff(
+    project_path: str, task_id: int, workspace_path: str | None
+) -> dict[str, Any]:
+    """Dapatkan diff dan status perubahan di worktree otonom."""
+    if not workspace_path or not Path(workspace_path).exists():
+        return {
+            "exists": False,
+            "diff": "Worktree tidak ditemukan atau sudah dibuang",
+            "branch": f"choros/task-{task_id}",
+        }
+
+    branch = f"choros/task-{task_id}"
+    project_path = str(Path(project_path).expanduser().resolve())
+
+    _, status_out = await _run("git", "-C", workspace_path, "status", "--short")
+    _, diff_uncommitted = await _run("git", "-C", workspace_path, "diff")
+    _, diff_committed = await _run("git", "-C", project_path, "diff", f"HEAD...{branch}")
+
+    combined = ""
+    if status_out:
+        combined += f"=== Status File ===\n{status_out}\n\n"
+    if diff_uncommitted:
+        combined += f"=== Perubahan Belum Di-commit ===\n{diff_uncommitted}\n\n"
+    if diff_committed:
+        combined += f"=== Perubahan Sudah Di-commit ===\n{diff_committed}\n\n"
+
+    if not combined:
+        combined = "Tidak ada perubahan pada worktree."
+
+    return {
+        "exists": True,
+        "branch": branch,
+        "status": status_out,
+        "diff": combined,
+    }
+
+
+async def merge_workspace_branch(
+    project_path: str, task_id: int, workspace_path: str | None
+) -> tuple[bool, str]:
+    """Commit perubahan di worktree, merge branch ke repo utama, lalu bersihkan worktree."""
+    branch = f"choros/task-{task_id}"
+    project_path = str(Path(project_path).expanduser().resolve())
+
+    if workspace_path and Path(workspace_path).exists():
+        _, status = await _run("git", "-C", workspace_path, "status", "--porcelain")
+        if status.strip():
+            await _run("git", "-C", workspace_path, "add", "-A")
+            await _run("git", "-C", workspace_path, "commit", "-m", f"choros task-{task_id} autonomous work")
+
+    code, out = await _run("git", "-C", project_path, "merge", "--no-ff", branch, "-m", f"Merge choros task-{task_id}")
+    if code != 0:
+        await _run("git", "-C", project_path, "merge", "--abort")
+        return False, f"Gagal merge (konflik git):\n{out}"
+
+    if workspace_path and Path(workspace_path).exists():
+        await _run("git", "-C", project_path, "worktree", "remove", "--force", workspace_path)
+    await _run("git", "-C", project_path, "branch", "-d", branch)
+
+    return True, f"Berhasil merge branch {branch} ke direktori utama."
+
+
+async def discard_workspace_branch(
+    project_path: str, task_id: int, workspace_path: str | None
+) -> tuple[bool, str]:
+    """Buang worktree dan hapus branch otonom tanpa merge."""
+    branch = f"choros/task-{task_id}"
+    project_path = str(Path(project_path).expanduser().resolve())
+
+    if workspace_path and Path(workspace_path).exists():
+        await _run("git", "-C", project_path, "worktree", "remove", "--force", workspace_path)
+    elif workspace_path:
+        shutil.rmtree(workspace_path, ignore_errors=True)
+
+    await _run("git", "-C", project_path, "branch", "-D", branch)
+    return True, f"Worktree dan branch {branch} berhasil dibuang."
+
+
+async def gc_old_worktrees(max_age_days: int = 7) -> list[str]:
+    """Pembersihan sampah worktree lama di isolation_root."""
+    settings = get_settings()
+    root = Path(settings.isolation_root).expanduser()
+    if not root.exists():
+        return []
+
+    removed: list[str] = []
+    cutoff = time.time() - (max_age_days * 86400)
+
+    for item in root.iterdir():
+        if item.is_dir():
+            try:
+                if item.stat().st_mtime < cutoff:
+                    shutil.rmtree(item, ignore_errors=True)
+                    removed.append(str(item))
+            except Exception:
+                pass
+    return removed
