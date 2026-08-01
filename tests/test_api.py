@@ -614,39 +614,54 @@ async def test_c6_seed_defaults_idempotent():
 
 
 @pytest.mark.asyncio
-async def test_d5_post_users_sets_credential_home(admin_client):
+async def test_d5_post_users_sets_credential_home():
     """D5: POST /api/users mengisi credential_home dan direktorinya benar-benar dibuat"""
     from pathlib import Path
     from app.config import get_settings
-    
-    res = await admin_client.post(
-        "/api/users",
-        json={"username": "d5_user", "password": "abc", "is_admin": False, "seed_defaults": False}
-    )
-    assert res.status_code == 201
-    
-    from app.db import SessionLocal
+    from httpx import AsyncClient, ASGITransport
+    from app.main import app
+    from app.security import get_current_user
     from app.models import User
-    from sqlalchemy import select
     
-    async with SessionLocal() as session:
-        user = (await session.execute(select(User).where(User.username == "d5_user"))).scalar_one()
-        assert user.credential_home is not None
-        home_path = Path(user.credential_home)
-        assert home_path.exists()
-        assert home_path.is_dir()
-        
-        settings = get_settings()
-        assert str(home_path) == str(Path(settings.credential_root) / "d5_user")
+    admin_user = User(username="admin_d5", is_admin=True)
+    app.dependency_overrides[get_current_user] = lambda: admin_user
+
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            res = await client.post(
+                "/api/users",
+                json={"username": "d5_user", "password": "abc", "is_admin": False, "seed_defaults": False}
+            )
+            assert res.status_code == 201
+
+        from app.db import SessionLocal
+        from app.models import User
+        from sqlalchemy import select
+
+        async with SessionLocal() as session:
+            user = (await session.execute(select(User).where(User.username == "d5_user"))).scalar_one()
+            assert user.credential_home is not None
+            home_path = Path(user.credential_home)
+            assert home_path.exists()
+            assert home_path.is_dir()
+
+            settings = get_settings()
+            assert str(home_path) == str(Path(settings.credential_root) / "d5_user")
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
 
 
 @pytest.mark.asyncio
 async def test_d6_bootstrap_admin_credential_home_is_null():
     """D6: Admin bootstrap tetap ber-credential_home NULL"""
+    from app.main import app, lifespan
     from app.db import SessionLocal
     from app.models import User
     from sqlalchemy import select
-    
-    async with SessionLocal() as session:
-        admin = (await session.execute(select(User).where(User.username == "tester"))).scalar_one()
-        assert admin.credential_home is None
+    from app.config import get_settings
+
+    async with lifespan(app):
+        settings = get_settings()
+        async with SessionLocal() as session:
+            admin = (await session.execute(select(User).where(User.username == settings.admin_username))).scalar_one()
+            assert admin.credential_home is None
