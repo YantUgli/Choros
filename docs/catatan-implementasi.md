@@ -118,26 +118,65 @@ hasil, bukan mengulanginya di log.
 
 ---
 
-## 3. Yang belum dikerjakan
+## 3. Status
 
-*Diperbarui 1 Agustus 2026, setelah Fase 4 ditutup dan Fase 5a dikerjakan.*
+*Diperbarui 2 Agustus 2026, setelah Fase 5c dikerjakan.*
 
-- **Fase 4 (workflow lintas-provider)** — **selesai.** API CRUD, runner
+- **Fase 4 (workflow lintas-provider)** — **kode selesai.** API CRUD, runner
   multi-step, artefak handoff, dan checkpoint approval sudah jalan (`3f74978`
-  beserta rangkaian penutupannya). Yang masih menganggur hanya verifikasi manual
-  lewat browser, `rencana-penutupan-fase4.md` §6.
-- **Fase 5 (mode tim)** — **selesai.** Isolasi kredensial per-user diimplementasikan
-  dengan menyediakan `credential_home` terpisah (contoh: `~/.choros/homes/<username>`)
-  sebagai `HOME` dan `USERPROFILE` untuk subprocess langganan (Claude/AGY/OpenCode).
+  beserta rangkaian penutupannya). Verifikasi manual lewat browser
+  (`rencana-penutupan-fase4.md` §6) belum pernah dijalankan.
+- **Fase 5 (mode tim)** — **kode selesai, belum terverifikasi.** 5a menutup
+  boundary routing & kuota, 5b memberi auth multi-user, 5c memberi
+  `credential_home` per-user (`~/.choros/homes/<username>`) yang dipasang sebagai
+  `HOME` dan `USERPROFILE` untuk subprocess langganan. 5d (container per user)
+  opsional dan sengaja tidak dikerjakan — `rencana-fase5.md` §3 memutuskan
+  `LocalLauncher` sudah cukup untuk maksud PRD.
 
-  **Catatan Penting Batas Isolasi:** Kunci API mentah yang disetel via environment
-  variable server (seperti `GROQ_API_KEY`, `OPENAI_API_KEY`) BUKAN milik individual user 
-  dan BUKAN di bawah kendali isolasi Choros. Isolasi hanya berlaku pada sesi CLI langganan 
-  yang membaca kredensial dan preferensi dari direktori `HOME` atau `USERPROFILE` tersebut.
-- **Klasifikasi LLM (PRD §5 v2)** — masih dropdown + keyword.
+  **Jangan tulis "selesai" tanpa kualifikasi.** Tidak ada satu pun dari 15 langkah
+  verifikasi manual (`rencana-penyelesaian.md` §6) yang pernah dijalankan.
+  Khususnya langkah 15 — user yang home-nya belum pernah di-login harus gagal
+  dengan error auth, **bukan** diam-diam memakai kredensial operator — adalah
+  bukti tunggal bahwa isolasi 5c benar-benar bekerja. Sampai itu lolos, mode tim
+  belum boleh dipakai sungguhan.
+
+  **Batas isolasi yang diketahui:** kunci API model mentah yang disetel lewat
+  environment server (`GROQ_API_KEY`, `OPENAI_API_KEY`, dan `env_keys` opencode)
+  **tidak** ikut terisolasi — `openai_compat.py` dan `opencode.py` membacanya dari
+  `os.environ` saat run. Isolasi hanya berlaku pada CLI langganan yang membaca
+  kredensial dari `HOME`/`USERPROFILE`. Jalan keluarnya tanpa kode baru:
+  `api_key_env` adalah *nama* variabel dan disimpan di `agents.config` yang sudah
+  per-user, jadi user berbeda bisa menunjuk variabel berbeda.
+
+### Ditutup sebagai keputusan sadar, bukan pekerjaan yang hilang
+
+- **Klasifikasi LLM (PRD §5 v2)** — tetap dropdown + keyword. PRD sendiri
+  menandainya opsional. Menambah panggilan LLM di jalur panas menambah latensi
+  dan konsumsi kuota demi keuntungan tipis.
+- **Auto-answer trust lewat stdin (PRD §4 "Cadangan")** — tidak dikerjakan. PRD
+  menyebutnya sendiri "rapuh; hanya jaring pengaman", dan jalur utamanya
+  (`ensure_trusted()` pre-seed) belum pernah gagal di lapangan. Kalau suatu saat
+  gagal, catat kasusnya dulu, baru bangun jaringnya.
 - **`ensure_trusted` untuk opencode** — opencode tidak punya konsep trust folder;
   izin ditangani per-run lewat `--auto`, sengaja tidak menulis permission wildcard
   ke config global user.
+
+### 3.1 Pelajaran: kontrak UI↔API tidak punya penjaga
+
+Tiga kali berturut-turut UI membaca field yang tidak pernah dikirim API, dan
+ketiganya lolos seluruh suite tanpa satu pun error:
+
+| Kapan | Gejala |
+|---|---|
+| Fase 4 (A1-A6) | enam pemanggilan `api()` di `app.js` tidak cocok dengan route/skema |
+| Fase 5b (H1) | `status.is_admin` tidak pernah dikirim → tab Pengguna tak pernah muncul |
+| Fase 5c | `status.credential_home` tidak pernah dikirim → panel panduan login mati |
+
+Pola gagalnya selalu sama: `undefined` itu falsy, jadi fiturnya hilang diam-diam,
+bukan meledak. Penjaganya sekarang ada — `test_c4_auth_status_contract`
+memeriksa **semua** kunci yang dibaca `app.js` beserta nomor barisnya. Kalau UI
+mulai membaca field baru dari sebuah endpoint, tambahkan ke test kontraknya di
+saat yang sama.
 
 ## 4. Verifikasi yang sudah dilakukan
 
@@ -151,3 +190,16 @@ Dijalankan sungguhan, bukan hanya unit test:
 - Mode otonom: tugas menulis file di worktree `choros/task-3`, repo asli tetap
   bersih.
 - Kuota: window `rolling_5h` terisi 25.093 token dari run nyata.
+
+Otomatis: 105 test hijau, nol skip; `ruff check app/ tests/` nol temuan.
+
+### Yang BELUM pernah diverifikasi
+
+**Nol langkah verifikasi lewat browser, sejak Fase 4 sampai 5c.** Seluruh UI
+Fase 4 (panel approval plan), Fase 5b (panel pengguna, logout, ganti password),
+dan Fase 5c (panel panduan login harness) hanya pernah dibaca sebagai kode,
+tidak pernah dijalankan manusia.
+
+Ini celah kepercayaan terbesar yang tersisa, dan bukan celah teoretis: ketiga bug
+di §3.1 hidup di lapisan itu dan tidak satu pun tertangkap oleh 105 test.
+Checklist 15 langkahnya ada di `rencana-penyelesaian.md` §6.
