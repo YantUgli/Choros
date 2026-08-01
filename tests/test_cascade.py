@@ -13,7 +13,7 @@ from sqlalchemy import select
 
 from app.db import SessionLocal
 from app.events import ERROR_RATE_LIMIT, Event
-from app.models import QuotaWindow, Task, TaskEvent, TaskLog
+from app.models import Agent, QuotaWindow, RoutingRule, Task, TaskEvent, TaskLog
 from app.orchestrator import runner as runner_module
 from app.orchestrator.runner import runner
 
@@ -328,4 +328,120 @@ async def test_run_cascade_returns_none_when_targets_exhausted(user, make_agent,
     async with SessionLocal() as session:
         db_task = await session.get(Task, task_id)
         assert db_task.status == "queued"
+
+
+# ------------------------------------------------- boundary multi-user (Fase 5a)
+
+
+async def _agent_for(owner, name: str, **config) -> Agent:
+    async with SessionLocal() as session:
+        agent = Agent(
+            user_id=owner.id,
+            name=name,
+            adapter_type="claude_code",
+            default_model="sonnet",
+            config=config,
+            is_active=True,
+        )
+        session.add(agent)
+        await session.commit()
+        return agent
+
+
+async def _quota_rows() -> list[QuotaWindow]:
+    async with SessionLocal() as session:
+        return list((await session.execute(select(QuotaWindow))).scalars())
+
+
+async def _attempt_as(user_obj, agent: Agent, tmp_path):
+    """Jalankan satu attempt atas nama `user_obj` memakai `agent` apa pun."""
+    from app.orchestrator.isolation import Workspace
+
+    async with SessionLocal() as session:
+        task = Task(
+            user_id=user_obj.id,
+            prompt="x",
+            category="coding_complex",
+            status="running",
+            project_path=str(tmp_path),
+        )
+        session.add(task)
+        await session.commit()
+        await session.refresh(task)
+        task_id = task.id
+
+    return await runner._run_attempt(
+        task_id,
+        user_id=user_obj.id,
+        agent=agent,
+        target=runner_module.Target(agent=agent, model="sonnet", priority=0),
+        prompt="x",
+        permission_mode="safe",
+        workspace=Workspace(path=str(tmp_path), isolated=False),
+    )
+
+
+async def test_task_never_routes_to_other_users_agent(user, user_b, tmp_path):
+    """F1 end-to-end: satu-satunya rule milik user lain → tugas berhenti bersih
+    dan agent user lain tidak pernah dijalankan (= pooling tertutup)."""
+    agent_b = await _agent_for(user_b, "agent_b", behaviour="ok")
+    async with SessionLocal() as session:
+        session.add(RoutingRule(category="coding_complex", agent_id=agent_b.id, priority=10))
+        await session.commit()
+
+    task = await run_task(
+        user_id=user.id, prompt="x", category="coding_complex", project_path=str(tmp_path)
+    )
+
+    assert task.status == "halted"
+    assert FakeAdapter.calls == [], "agent milik user lain tidak boleh dijalankan"
+
+
+async def test_pinned_agent_from_other_user_is_ignored(
+    user, user_b, make_agent, make_route, tmp_path
+):
+    """F1 turunan: pinned_agent_id milik user lain tidak disisipkan ke cascade."""
+    own = await make_agent("own", behaviour="ok")
+    await make_route("coding_complex", own, priority=10)
+    foreign = await _agent_for(user_b, "foreign", behaviour="ok")
+
+    task = await run_task(
+        user_id=user.id,
+        prompt="x",
+        category="coding_complex",
+        project_path=str(tmp_path),
+        pinned_agent_id=foreign.id,
+    )
+
+    assert task.status == "ok"
+    assert [c["agent"] for c in FakeAdapter.calls] == ["own"]
+
+
+async def test_cooldown_recorded_for_task_owner_not_agent_owner(user, user_b, tmp_path):
+    """F2: cooldown dicatat atas nama pemilik TUGAS.
+
+    Dipanggil langsung ke `_run_attempt`: setelah F1 ditutup, kombinasi "agent
+    milik orang lain" tidak lagi bisa dicapai lewat jalur normal — tapi
+    `_run_attempt` tetap tidak boleh menyimpulkan identitas dari `agent.user_id`.
+    """
+    agent_b = await _agent_for(user_b, "agent_b", behaviour="rate_limit")
+
+    attempt = await _attempt_as(user, agent_b, tmp_path)
+
+    assert attempt.status == "rate_limited"
+    rows = await _quota_rows()
+    assert rows, "cooldown harus tercatat"
+    assert {r.user_id for r in rows} == {user.id}
+
+
+async def test_usage_recorded_for_task_owner_not_agent_owner(user, user_b, tmp_path):
+    """F2: konsumsi token juga atas nama pemilik tugas."""
+    agent_b = await _agent_for(user_b, "agent_b", behaviour="ok")
+
+    attempt = await _attempt_as(user, agent_b, tmp_path)
+
+    assert attempt.status == "ok"
+    rows = await _quota_rows()
+    assert {r.user_id for r in rows} == {user.id}
+    assert sum(r.tokens_used for r in rows) == 150
 

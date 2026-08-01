@@ -180,8 +180,9 @@ class TaskRunner:
             task.status = "running"
             await session.commit()
 
-            targets = await resolve_targets(session, task.category)
+            # user_id dibaca lebih dulu: routing wajib disaring pemilik tugas
             user_id = task.user_id
+            targets = await resolve_targets(session, task.category, user_id=user_id)
             category = task.category
             mode = task.mode
             prompt = task.prompt
@@ -209,7 +210,9 @@ class TaskRunner:
                         )
                     ).scalar_one_or_none()
                     if step is not None:
-                        step_targets = await resolve_step_targets(session, step, category)
+                        step_targets = await resolve_step_targets(
+                            session, step, category, user_id=user_id
+                        )
                         if step_targets:
                             targets = step_targets
 
@@ -220,7 +223,7 @@ class TaskRunner:
                 targets.sort(key=lambda t: (t.agent.id != task.pinned_agent_id, t.priority))
                 if not targets or targets[0].agent.id != task.pinned_agent_id:
                     pinned = await session.get(Agent, task.pinned_agent_id)
-                    if pinned is not None and pinned.is_active:
+                    if pinned is not None and pinned.is_active and pinned.user_id == user_id:
                         targets.insert(
                             0, Target(agent=pinned, model=pinned.default_model, priority=0)
                         )
@@ -395,6 +398,7 @@ class TaskRunner:
 
             attempt = await self._run_attempt(
                 ctx.task_id,
+                user_id=ctx.user_id,
                 agent=agent,
                 target=target,
                 prompt=attempt_prompt,
@@ -446,6 +450,7 @@ class TaskRunner:
         self,
         task_id: int,
         *,
+        user_id: int,
         agent: Agent,
         target: Target,
         prompt: str,
@@ -504,7 +509,7 @@ class TaskRunner:
                 async with session_scope() as session:
                     await quota.mark_exhausted(
                         session,
-                        user_id=agent.user_id,
+                        user_id=user_id,
                         agent_id=agent.id,
                         model=target.model,
                         retry_after_seconds=attempt.error.data.get("retry_after"),
@@ -524,7 +529,7 @@ class TaskRunner:
             async with session_scope() as session:
                 await quota.record_usage(
                     session,
-                    user_id=agent.user_id,
+                    user_id=user_id,
                     agent_id=agent.id,
                     model=target.model,
                     tokens=tokens,

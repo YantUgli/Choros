@@ -59,12 +59,24 @@ class Target:
         return f"{self.agent.name}/{self.model or self.agent.default_model or 'default'}"
 
 
-async def resolve_targets(session: AsyncSession, category: str) -> list[Target]:
-    """Daftar target berurut priority untuk sebuah kategori."""
+async def resolve_targets(
+    session: AsyncSession, category: str, *, user_id: int
+) -> list[Target]:
+    """Daftar target berurut priority untuk sebuah kategori, milik satu user.
+
+    `user_id` sengaja keyword-only tanpa default: pemanggil yang lupa harus gagal
+    keras, bukan diam-diam merutekan tugas ke agent milik user lain (= pooling,
+    non-tujuan eksplisit PRD §1). Kepemilikan disaring lewat `Agent.user_id` —
+    `routing_rules` tidak punya kolom pemilik sendiri, dan memang tidak perlu.
+    """
     stmt = (
         select(RoutingRule, Agent)
         .join(Agent, Agent.id == RoutingRule.agent_id)
-        .where(RoutingRule.category == category, Agent.is_active.is_(True))
+        .where(
+            RoutingRule.category == category,
+            Agent.is_active.is_(True),
+            Agent.user_id == user_id,
+        )
         .order_by(RoutingRule.priority, RoutingRule.id)
     )
     rows = (await session.execute(stmt)).all()
@@ -75,13 +87,13 @@ async def resolve_targets(session: AsyncSession, category: str) -> list[Target]:
 
 
 async def resolve_step_targets(
-    session: AsyncSession, step: WorkflowStep, fallback_category: str
+    session: AsyncSession, step: WorkflowStep, fallback_category: str, *, user_id: int
 ) -> list[Target]:
     """Resolve targets JSONB step; kalau kosong, jatuh ke routing rule kategori step."""
     step_targets = step.targets or []
     if not step_targets:
         category = step.category or fallback_category
-        return await resolve_targets(session, category)
+        return await resolve_targets(session, category, user_id=user_id)
 
     # Urutan di JSONB adalah urutan cascade — priority diambil dari indeks
     result: list[Target] = []
@@ -90,7 +102,9 @@ async def resolve_step_targets(
         if agent_id is None:
             continue
         agent = await session.get(Agent, agent_id)
-        if agent is None or not agent.is_active:
+        # Kepemilikan divalidasi saat tulis (workflows.py:_validate_step_agent_ids),
+        # tapi ditegakkan lagi di sini: JSONB bisa berubah lewat jalur lain.
+        if agent is None or not agent.is_active or agent.user_id != user_id:
             continue
         model = entry.get("model") or agent.default_model
         result.append(Target(agent=agent, model=model, priority=idx))

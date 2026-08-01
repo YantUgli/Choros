@@ -1,8 +1,26 @@
 from __future__ import annotations
 
 from app.adapters.registry import adapter_can_execute
+from app.db import SessionLocal
+from app.models import Agent, RoutingRule, WorkflowStep
 from app.orchestrator.quality import meets_floor, model_tier
-from app.orchestrator.router import classify
+from app.orchestrator.router import classify, resolve_step_targets, resolve_targets
+
+
+async def _foreign_agent(user_b, name: str = "agent_b") -> Agent:
+    """Agent aktif milik user lain — dipakai untuk menguji boundary Fase 5."""
+    async with SessionLocal() as session:
+        agent = Agent(
+            user_id=user_b.id,
+            name=name,
+            adapter_type="claude_code",
+            default_model="sonnet",
+            config={},
+            is_active=True,
+        )
+        session.add(agent)
+        await session.commit()
+        return agent
 
 
 def test_tier_ordering_matches_intuition():
@@ -75,3 +93,48 @@ def test_raw_model_has_no_hands():
     assert not adapter_can_execute("openai_compatible")
     assert adapter_can_execute("opencode")
     assert adapter_can_execute("claude_code")
+
+
+# ------------------------------------------------- boundary multi-user (Fase 5a)
+
+
+async def test_resolve_targets_only_returns_own_agents(user, user_b, make_agent, make_route):
+    """F1: rule user lain tidak boleh muncul walau kategorinya sama.
+
+    Rule milik user_b sengaja diberi priority lebih tinggi (1 < 10): tanpa filter
+    pemilik, ia akan menempati urutan PERTAMA cascade user A.
+    """
+    agent_a = await make_agent("agent_a")
+    await make_route("coding_complex", agent_a, priority=10)
+
+    agent_b = await _foreign_agent(user_b)
+    async with SessionLocal() as session:
+        session.add(RoutingRule(category="coding_complex", agent_id=agent_b.id, priority=1))
+        await session.commit()
+
+    async with SessionLocal() as session:
+        targets_a = await resolve_targets(session, "coding_complex", user_id=user.id)
+        targets_b = await resolve_targets(session, "coding_complex", user_id=user_b.id)
+
+    assert [t.agent.name for t in targets_a] == ["agent_a"]
+    assert [t.agent.name for t in targets_b] == ["agent_b"]
+
+
+async def test_resolve_step_targets_drops_foreign_agent(user, user_b, make_agent):
+    """F1 turunan: entri targets JSONB milik agent user lain dibuang saat jalan."""
+    agent_a = await make_agent("agent_a")
+    agent_b = await _foreign_agent(user_b)
+
+    # step transient — resolve_step_targets hanya membaca .targets dan .category
+    step = WorkflowStep(
+        step_order=0,
+        category="coding_complex",
+        targets=[{"agent_id": agent_b.id}, {"agent_id": agent_a.id}],
+    )
+
+    async with SessionLocal() as session:
+        targets = await resolve_step_targets(
+            session, step, "coding_complex", user_id=user.id
+        )
+
+    assert [t.agent.name for t in targets] == ["agent_a"]
