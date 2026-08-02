@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.adapters.registry import adapter_can_execute, build_adapter
 from app.config import get_settings
 from app.db import session_scope
-from app.events import ERROR_RATE_LIMIT, Event
+from app.events import ERROR_CRASH, ERROR_RATE_LIMIT, Event
 from app.models import Agent, Task, TaskEvent, TaskLog, User
 from app.orchestrator import quota
 from app.orchestrator.bus import bus
@@ -488,22 +488,35 @@ class TaskRunner:
             resume_session_id=resume_session_id,
         )
 
-        async for event in stream:
-            await self._emit(task_id, event)
+        try:
+            async for event in stream:
+                await self._emit(task_id, event)
 
-            if event.type == "usage":
-                usage_total = _merge_usage(usage_total, event.data)
-            elif event.type == "output":
-                if event.data.get("final"):
-                    final_output = event.data.get("text", "")
-                elif not event.data.get("partial"):
-                    outputs.append(event.data.get("text", ""))
-            elif event.type == "status" and event.data.get("session_id"):
-                attempt.session_id = event.data["session_id"]
-            elif event.type == "error":
-                attempt.error = event
-                if event.is_cascade_trigger:
-                    break
+                if event.type == "usage":
+                    usage_total = _merge_usage(usage_total, event.data)
+                elif event.type == "output":
+                    if event.data.get("final"):
+                        final_output = event.data.get("text", "")
+                    elif not event.data.get("partial"):
+                        outputs.append(event.data.get("text", ""))
+                elif event.type == "status" and event.data.get("session_id"):
+                    attempt.session_id = event.data["session_id"]
+                elif event.type == "error":
+                    attempt.error = event
+                    if event.is_cascade_trigger:
+                        break
+        except Exception as exc:
+            # Adapter yang meledak di luar kontrak Event adalah satu target yang
+            # mati, bukan tugas yang mati — cascade justru ada untuk ini.
+            # (CancelledError turunan BaseException, jadi pembatalan tetap lewat.)
+            crash = Event.error(
+                ERROR_CRASH,
+                f"adapter {agent.name} gagal: {exc!r}",
+                agent=agent.name,
+                model=target.model,
+            )
+            await self._emit(task_id, crash)
+            attempt.error = crash
 
         attempt.usage = usage_total
         attempt.output = final_output if final_output is not None else "\n".join(outputs).strip()

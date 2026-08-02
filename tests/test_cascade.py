@@ -62,6 +62,10 @@ class FakeAdapter:
         if self.behaviour == "crash":
             yield Event.error("crash", "meledak")
             return
+        if self.behaviour == "raise":
+            # exception mentah di luar kontrak Event — mis. NotImplementedError
+            # dari loop yang tidak bisa spawn subprocess
+            raise RuntimeError("adapter meledak di luar kontrak")
         yield Event("output", {"text": f"beres oleh {self.name}", "final": True})
         yield Event.status("selesai", final=True)
 
@@ -472,3 +476,33 @@ async def test_d7_cascade_passes_home_to_build_adapter(user_b, make_agent, make_
     
     assert len(FakeAdapter.calls) == 1
     assert FakeAdapter.calls[0]["home"] == "/custom/home/user_b"
+
+
+async def test_e6_exception_mentah_jatuh_ke_target_berikutnya(
+    user, make_agent, make_route, tmp_path
+):
+    """E6: adapter yang melempar exception = satu target mati, bukan tugas mati.
+
+    Dulu exception dari adapter lolos sampai catch-all `_run()` dan melompati
+    seluruh loop cascade, jadi 7 target sisanya tidak pernah dicoba.
+    """
+    primary = await make_agent("primary", behaviour="raise")
+    backup = await make_agent("backup", behaviour="ok")
+    await make_route("coding_complex", primary, priority=10)
+    await make_route("coding_complex", backup, priority=20)
+
+    task = await run_task(
+        user_id=user.id, prompt="kerjakan ini", category="coding_complex", project_path=str(tmp_path)
+    )
+
+    assert task.status == "ok"
+    assert task.final_output == "beres oleh backup"
+    assert [c["agent"] for c in FakeAdapter.calls] == ["primary", "backup"]
+    assert [e.status for e in await logs_for(task.id)] == ["error", "ok"]
+
+    pesan = [
+        e.data.get("message", "")
+        for e in await events_for(task.id)
+        if e.type == "error"
+    ]
+    assert any("adapter primary gagal" in m and "RuntimeError" in m for m in pesan)
