@@ -30,11 +30,18 @@ cp .env.example .env                  # isi CHOROS_SECRET_KEY dan DATABASE_URL
 # 4. agent + routing default (strategi PRD §5)
 .venv/bin/python -m scripts.seed
 
-# 5. jalan
+# 5. frontend (cockpit React — disajikan dari app/static/dist)
+cd app/static && npm install && npm run build && cd ../..
+
+# 6. jalan
 .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
 Buka `http://127.0.0.1:8000`. Untuk auto-restart: `deploy/choros.service`.
+
+Saat menggarap frontend, `cd app/static && npm run dev` (port 5173) memberi
+hot-reload dan mem-proxy `/api` ke uvicorn di port 8000. Detail implementasi dan
+peta design system → komponen ada di [IMPLEMENTATION.md](IMPLEMENTATION.md).
 
 **Windows + `--reload`:** pakai `--loop asyncio:ProactorEventLoop`.
 
@@ -160,7 +167,7 @@ app/
   adapters/     kontrak Event + satu adapter per harness
   orchestrator/ routing, kuota, quality floor, isolasi, runner (cascade)
   api/          tasks (+SSE), agents, routing, quota, auth
-  static/       dashboard + live console
+  static/       cockpit React+TS (Vite) — sumber di src/, yang disajikan dist/
 migrations/     skema PostgreSQL
 deploy/         systemd unit + nginx (SSE-safe)
 docs/           catatan penyimpangan dari PRD & temuan lapangan

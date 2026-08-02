@@ -1,0 +1,5 @@
+/* choros — webfonts.
+   Inter (chrome/labels) + JetBrains Mono (all machine data).
+   Loaded from Google Fonts. If self-hosting, replace with @font-face.
+   SUMBER: _ds/choros-design-system-8c23b874…/tokens/fonts.css */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap");
