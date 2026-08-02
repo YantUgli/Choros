@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Badge, Button, Select, StatusDot, type BadgeTone, type DotStatus } from "../../components/ds";
 import { Meta } from "../../components/Label";
 import { SESSIONS } from "../../data/fixtures";
@@ -11,6 +11,7 @@ import {
   type ConsoleStatus,
 } from "../../state/types";
 import type { ConsoleActions } from "../../state/useConsole";
+import { AttemptsPanel } from "./AttemptsPanel";
 import { CascadePanel } from "./CascadePanel";
 import { ComposePanel } from "./ComposePanel";
 import { FollowUpStrip } from "./FollowUpStrip";
@@ -49,6 +50,16 @@ export function ConsoleScreen({
 }) {
   const modals = useModals();
   const [selectedSession, setSelectedSession] = useState<number | null>(null);
+  const [attemptsFailed, setAttemptsFailed] = useState(false);
+
+  // Run baru berhak atas percobaan pengambilan jejaknya sendiri.
+  useEffect(() => {
+    setAttemptsFailed(false);
+  }, [state.runId]);
+
+  // Identitasnya harus stabil: AttemptsPanel menaruhnya di dependency effect,
+  // jadi callback baru tiap render = satu GET /logs tiap render induk.
+  const onAttemptsEmpty = useCallback(() => setAttemptsFailed(true), []);
 
   const pill = PILLS[state.status];
   const busy = BUSY_STATUSES.includes(state.status);
@@ -69,9 +80,13 @@ export function ConsoleScreen({
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  const terminal = state.status === "done" || state.status === "halted" || state.status === "error";
   // Panel cascade hanya muncul kalau cascade benar-benar terjadi — run yang lurus
   // dari target pertama tidak perlu diceritakan.
   const showCascade = state.attempts.some((a) => a.outcome === "failed" || a.outcome === "skipped");
+  // Jejak eksekusi menggantikan panel cascade begitu run berhenti — tapi kalau
+  // jejaknya gagal diambil, cascade kembali jadi cadangan agar layar tak kosong.
+  const showAttempts = terminal && state.runId > 0 && !isMock && !attemptsFailed;
   const showPlainFooter = state.status === "running" || state.status === "cascading" || state.paused;
 
   return (
@@ -222,7 +237,8 @@ export function ConsoleScreen({
               onJumpLatest={actions.jumpLatest}
             />
 
-            {showCascade && (
+            {showAttempts && <AttemptsPanel taskId={state.runId} onEmpty={onAttemptsEmpty} />}
+            {showCascade && !showAttempts && (
               <CascadePanel runId={state.runId} attempts={state.attempts} status={state.status} />
             )}
 
