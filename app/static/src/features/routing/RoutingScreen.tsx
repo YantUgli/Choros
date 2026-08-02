@@ -1,12 +1,19 @@
-import { useRef, useState } from "react";
-import { Badge, Button, Card, Panel, StatusDot } from "../../components/ds";
+import { useEffect, useRef, useState } from "react";
+import { Button, Card, Panel, StatusDot } from "../../components/ds";
 import { GripIcon } from "../../components/Icons";
 import { Label, Meta } from "../../components/Label";
-import { ADAPTERS, CATEGORIES, ROUTE_CHAINS, type RouteTarget } from "../../data/fixtures";
+import { ADAPTERS } from "../../data/katalogModel";
 import { useModals } from "../../state/modals";
-import type { TaskCategory } from "../../state/types";
-
-type Chains = Record<TaskCategory, RouteTarget[]>;
+import { useApiResource } from "../../state/useApiResource";
+import {
+  createRoutingRule,
+  deleteRoutingRule,
+  fetchCategories,
+  fetchRoutingData,
+  RouteTarget,
+  updateRoutingRule,
+} from "../../services/routingApi";
+import { fetchAgents } from "../../services/agentApi";
 
 function move<T>(list: T[], from: number, to: number): T[] {
   if (to < 0 || to >= list.length || from === to) return list;
@@ -19,18 +26,65 @@ function move<T>(list: T[], from: number, to: number): T[] {
 
 export function RoutingScreen() {
   const modals = useModals();
-  const [chains, setChains] = useState<Chains>(() => structuredClone(ROUTE_CHAINS));
-  const [cat, setCat] = useState<TaskCategory>("coding_complex");
+  const [res, reloadData] = useApiResource(fetchRoutingData);
+  const [catsRes] = useApiResource(fetchCategories);
+  
+  const [optimisticChains, setOptimisticChains] = useState<Record<string, RouteTarget[]> | null>(null);
+  
+  const [cat, setCat] = useState<string>("coding_complex");
   const dragFrom = useRef<number | null>(null);
   const [dragOver, setDragOver] = useState<number | null>(null);
 
-  const targets = chains[cat];
+  // Optimistic update
+  useEffect(() => {
+    if (res.phase === "ready") {
+      setOptimisticChains(res.data);
+    }
+  }, [res]);
 
-  const setTargets = (next: RouteTarget[]) => setChains({ ...chains, [cat]: next });
+  if (res.phase === "loading" || !optimisticChains) {
+    return <div style={{ padding: "var(--space-4)" }}>Memuat...</div>;
+  }
+  if (res.phase === "error") {
+    return (
+      <div style={{ padding: "var(--space-4)", color: "var(--limit)" }}>
+        {res.status === 401 ? "belum login" : `daemon tidak menjawab: ${res.message}`}
+        <br />
+        <Button onClick={reloadData} style={{ marginTop: 10 }}>Coba lagi</Button>
+      </div>
+    );
+  }
 
-  const reorder = (from: number, to: number) => setTargets(move(targets, from, to));
+  const categories = catsRes.phase === "ready" ? catsRes.data : [];
+  
+  // Kalau kategori tidak ada (misalnya DB kosong), tambahkan yang terpilih ke UI agar bisa di-edit.
+  if (categories.length > 0 && !categories.some(c => c.value === cat)) {
+    setCat(categories[0]!.value);
+  }
 
-  const editTarget = (t: RouteTarget, index: number) => {
+  const targets = optimisticChains[cat] || [];
+
+  const setTargets = (next: RouteTarget[]) => setOptimisticChains({ ...optimisticChains, [cat]: next });
+
+  const reorder = async (from: number, to: number) => {
+    const next = move(targets, from, to);
+    setTargets(next);
+    
+    // Kirim pembaruan prioritas per baris ke server
+    for (let i = 0; i < next.length; i++) {
+      const t = next[i]!;
+      await updateRoutingRule(t.id, {
+        category: cat,
+        agent_id: t.agentId,
+        model: t.model,
+        priority: i + 1,
+      });
+    }
+    reloadData();
+  };
+
+  const editTarget = async (t: RouteTarget, index: number) => {
+    const agents = await fetchAgents();
     modals.openAgent(
       {
         title: `Ubah target ${index + 1}`,
@@ -39,46 +93,48 @@ export function RoutingScreen() {
         model: t.model,
         active: true,
       },
-      (draft) => {
-        setTargets(
-          targets.map((x, i) =>
-            i === index
-              ? {
-                  ...x,
-                  agent: draft.name || x.agent,
-                  adapter: draft.adapter,
-                  model: draft.model,
-                  target: `${draft.name || x.agent}/${draft.model}`,
-                }
-              : x,
-          ),
-        );
+      async (draft) => {
+        // Cari agent_id dari agent list by name
+        let agentId = t.agentId;
+        const matchingAgent = agents.find(a => a.name === draft.name);
+        if (matchingAgent) {
+          agentId = matchingAgent.id;
+        }
+
+        await updateRoutingRule(t.id, {
+          category: cat,
+          agent_id: agentId,
+          model: draft.model || null,
+          priority: index + 1,
+        });
+        reloadData();
       },
     );
   };
 
-  const addTarget = () => {
-    modals.openAgent({ title: `Tambah target — ${cat}` }, (draft) => {
-      setTargets([
-        ...targets,
-        {
-          id: `new-${Date.now()}`,
-          target: `${draft.name || "agent"}/${draft.model}`,
-          agent: draft.name || "agent",
-          adapter: draft.adapter,
-          model: draft.model,
-          floor: null,
-          quotaStatus: "ok",
-          quotaLabel: "tersedia",
-        },
-      ]);
+  const addTarget = async () => {
+    const agents = await fetchAgents();
+    modals.openAgent({ title: `Tambah target — ${cat}` }, async (draft) => {
+      let agentId = 0;
+      const matchingAgent = agents.find(a => a.name === draft.name);
+      if (matchingAgent) {
+        agentId = matchingAgent.id;
+      }
+      
+      await createRoutingRule({
+        category: cat,
+        agent_id: agentId,
+        model: draft.model || null,
+        priority: targets.length + 1,
+      });
+      reloadData();
     });
   };
 
-  const addCategory = () => {
-    modals.openAgent({ title: "Kategori baru — target pertama" }, () => {
-      /* kategori baru butuh endpoint daemon; belum ada di mock. */
-    });
+  const removeTarget = async (id: number) => {
+    if (!window.confirm("Hapus target routing ini?")) return;
+    await deleteRoutingRule(id);
+    reloadData();
   };
 
   return (
@@ -98,8 +154,8 @@ export function RoutingScreen() {
         }}
       >
         <Label>Kategori</Label>
-        {CATEGORIES.map((c) => (
-          <Card key={c} interactive active={cat === c} onClick={() => setCat(c)}>
+        {categories.map((c) => (
+          <Card key={c.value} interactive active={cat === c.value} onClick={() => setCat(c.value)}>
             <div
               style={{
                 display: "flex",
@@ -110,22 +166,19 @@ export function RoutingScreen() {
                 padding: 2,
               }}
             >
-              <span style={{ fontWeight: cat === c ? 600 : 400, color: cat === c ? "var(--text)" : "var(--muted)" }}>
-                {c}
+              <span style={{ fontWeight: cat === c.value ? 600 : 400, color: cat === c.value ? "var(--text)" : "var(--muted)" }}>
+                {c.label}
               </span>
-              <span style={{ color: "var(--muted)", fontSize: "var(--fs-12)" }}>{chains[c].length}</span>
+              <span style={{ color: "var(--muted)", fontSize: "var(--fs-12)" }}>{optimisticChains[c.value]?.length || 0}</span>
             </div>
           </Card>
         ))}
-        <Button variant="ghost" size="sm" onClick={addCategory} style={{ width: "100%" }}>
-          + kategori baru
-        </Button>
       </div>
 
       <div className="ov" style={{ flex: 1, minWidth: 0, padding: "var(--space-4)", overflow: "auto" }}>
         <Panel
           title="Rantai prioritas"
-          subtitle={`${cat} — urutan jatuh saat 429 · limit · < floor`}
+          subtitle={`${cat} — urutan jatuh saat 429 · limit`}
           style={{ maxWidth: 900 }}
         >
           <div style={{ display: "flex", flexDirection: "column" }}>
@@ -172,7 +225,7 @@ export function RoutingScreen() {
                     <span
                       role="button"
                       tabIndex={0}
-                      aria-label={`urutkan ${t.target} — Alt+panah atas/bawah`}
+                      aria-label={`urutkan ${t.label} — Alt+panah atas/bawah`}
                       onClick={(e) => e.stopPropagation()}
                       onKeyDown={(e) => {
                         if (!e.altKey) return;
@@ -199,11 +252,29 @@ export function RoutingScreen() {
                         whiteSpace: "nowrap",
                       }}
                     >
-                      {t.target}
+                      {t.label}
                     </span>
-                    <Badge tone="neutral">floor {t.floor ?? "—"}</Badge>
-                    <div style={{ marginLeft: "auto" }}>
-                      <StatusDot status={t.quotaStatus} label={t.quotaLabel} />
+                    <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 15 }}>
+                      <StatusDot status={t.quotaExhausted ? "error" : "ok"} label={t.quotaLabel} />
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          removeTarget(t.id);
+                        }}
+                        className="choros-danger-link"
+                        style={{
+                          color: "var(--muted)",
+                          cursor: "pointer",
+                          background: "none",
+                          border: "none",
+                          padding: 0,
+                          font: "inherit",
+                          transition: "color var(--dur) var(--ease)",
+                        }}
+                      >
+                        hapus
+                      </button>
                     </div>
                   </div>
                 </Card>
@@ -216,7 +287,7 @@ export function RoutingScreen() {
                   }}
                 >
                   {i === 0 && targets.length > 1
-                    ? "↓ jika 429 · limit · < floor"
+                    ? "↓ jika 429 · limit"
                     : i < targets.length - 1
                       ? "↓"
                       : "↓ rantai habis → run masuk halted — plan tersimpan"}
