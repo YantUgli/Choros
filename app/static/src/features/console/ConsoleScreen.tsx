@@ -241,8 +241,25 @@ export function ConsoleScreen({
                 <ResultStrip
                   result={state.result}
                   onDiff={() => modals.openDiff(state.runId, actions.reset)}
-                  onMerge={actions.reset}
-                  onDiscard={actions.reset}
+                  onMerge={async () => {
+                    const { mergeDiff } = await import("../../services/taskApi");
+                    try {
+                      await mergeDiff(state.runId);
+                      actions.reset();
+                    } catch (err) {
+                      alert(`Gagal merge: ${String(err)}`);
+                    }
+                  }}
+                  onDiscard={async () => {
+                    if (!window.confirm("Buang semua perubahan di worktree ini?")) return;
+                    const { discardDiff } = await import("../../services/taskApi");
+                    try {
+                      await discardDiff(state.runId);
+                      actions.reset();
+                    } catch (err) {
+                      alert(`Gagal discard: ${String(err)}`);
+                    }
+                  }}
                 />
                 <FollowUpStrip onSend={actions.followUp} />
               </>

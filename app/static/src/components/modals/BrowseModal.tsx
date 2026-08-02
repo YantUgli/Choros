@@ -3,7 +3,29 @@ import { Button } from "../ds";
 import { FolderIcon } from "../Icons";
 import { Label } from "../Label";
 import { Modal } from "../Modal";
-import { FS } from "../../data/fixtures";
+const FS: Record<string, string[]> = {
+  "C:\\": ["project", "Users", "Windows", "temp"],
+  "C:\\project": ["src", "Assets", "api", "infra", "web"],
+  "C:\\project\\src": ["auth", "components", "lib", "routes"],
+  "C:\\project\\src\\auth": [],
+  "C:\\project\\src\\components": [],
+  "C:\\project\\src\\lib": [],
+  "C:\\project\\src\\routes": [],
+  "C:\\project\\Assets": ["portpilot-notes"],
+  "C:\\project\\Assets\\portpilot-notes": [],
+  "C:\\project\\api": ["handlers", "db"],
+  "C:\\project\\api\\handlers": [],
+  "C:\\project\\api\\db": [],
+  "C:\\project\\infra": [],
+  "C:\\project\\web": ["public", "styles"],
+  "C:\\project\\web\\public": [],
+  "C:\\project\\web\\styles": [],
+  "C:\\Users": ["dev"],
+  "C:\\Users\\dev": ["repos"],
+  "C:\\Users\\dev\\repos": [],
+  "C:\\Windows": [],
+  "C:\\temp": [],
+};
 
 /** Folder picker: naik/turun folder, breadcrumb mono, "Pilih folder ini". */
 export function BrowseModal({

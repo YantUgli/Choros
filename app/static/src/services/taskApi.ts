@@ -42,7 +42,7 @@ export function toAttemptRows(logs: WireTaskLog[], agents: WireAgent[]): Attempt
     });
 }
 
-import { apiGet, API_BASE } from "./api";
+import { apiGet, apiSend, API_BASE } from "./api";
 
 let cachedAgents: WireAgent[] | null = null;
 
@@ -57,4 +57,16 @@ export async function fetchAttempts(taskId: number, base = API_BASE): Promise<At
   }
   const logs = await apiGet<WireTaskLog[]>(`/api/tasks/${taskId}/logs`, base);
   return toAttemptRows(logs, cachedAgents ?? []);
+}
+
+export async function fetchDiff(taskId: number): Promise<{ diff?: string; status?: string }> {
+  return apiGet<{ diff?: string; status?: string }>(`/api/tasks/${taskId}/diff`);
+}
+
+export async function mergeDiff(taskId: number): Promise<void> {
+  await apiSend("POST", `/api/tasks/${taskId}/merge`);
+}
+
+export async function discardDiff(taskId: number): Promise<void> {
+  await apiSend("POST", `/api/tasks/${taskId}/discard`);
 }

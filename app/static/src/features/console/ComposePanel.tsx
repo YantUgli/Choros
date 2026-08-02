@@ -3,8 +3,16 @@ import { Button, Input, Select, Toggle } from "../../components/ds";
 import { Caret } from "../../components/Icons";
 import { Field, Label } from "../../components/Label";
 import { useModals } from "../../state/modals";
-import { CATEGORIES, PLAN_STEPS } from "../../data/fixtures";
+import { useApiResource } from "../../state/useApiResource";
+import { fetchCategories } from "../../services/routingApi";
 import type { RunRequest, TaskCategory, TaskMode } from "../../state/types";
+
+const PLAN_STEPS = [
+  "1. baca modul auth",
+  "2. petakan pemakaian token",
+  "3. pindah ke httponly cookie",
+  "4. jalankan typecheck",
+];
 
 /**
  * Nama tier persis seperti yang dimengerti `app/orchestrator/quality.py::_floor_tier`.
@@ -35,6 +43,9 @@ export function ComposePanel({ busy, canCancel, onRun, onCancel }: ComposeProps)
   const [floor, setFloor] = useState("");
   const [noIsolation, setNoIsolation] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
+  
+  const [catsRes] = useApiResource(fetchCategories);
+  const categories = catsRes.phase === "ready" ? catsRes.data : [];
 
   const runDisabled = busy || prompt.trim().length === 0;
 
@@ -99,9 +110,9 @@ export function ComposePanel({ busy, canCancel, onRun, onCancel }: ComposeProps)
             value={category}
             onChange={(e) => setCategory(e.target.value as TaskCategory)}
           >
-            {CATEGORIES.map((c) => (
-              <option key={c} value={c}>
-                {c}
+            {categories.map((c) => (
+              <option key={c.value} value={c.value}>
+                {c.label}
               </option>
             ))}
           </Select>
