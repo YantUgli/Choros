@@ -17,6 +17,7 @@ from app.events import (
     ERROR_TIMEOUT,
     Event,
 )
+from app.runtime import subprocess_unsupported_message
 
 # Pola yang menandakan "target ini sedang mentok kuota" pada teks harness.
 _RATE_LIMIT_PATTERNS = re.compile(
@@ -215,6 +216,16 @@ class BaseCliAdapter:
                 env=env,
                 limit=4 * 1024 * 1024,
             )
+        except NotImplementedError:
+            # Bukan kegagalan harness: loop-nya yang tidak punya dukungan
+            # subprocess. Tanpa pesan ini yang muncul cuma `NotImplementedError()`.
+            yield Event.error(
+                ERROR_CRASH,
+                subprocess_unsupported_message(asyncio.get_running_loop()),
+                agent=self.name,
+                model=model,
+            )
+            return
         except OSError as exc:
             yield Event.error(ERROR_CRASH, f"gagal menjalankan {cmd[0]}: {exc}",
                               agent=self.name, model=model)

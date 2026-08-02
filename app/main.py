@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -16,6 +17,7 @@ from app.models import User
 from app.orchestrator.isolation import gc_old_worktrees
 from app.orchestrator.runner import runner
 from app.orchestrator.workflow import recover_interrupted_runs
+from app.runtime import loop_supports_subprocess, subprocess_unsupported_message
 from app.security import auth_disabled
 
 log = logging.getLogger("choros")
@@ -25,6 +27,14 @@ STATIC_DIR = Path(__file__).parent / "static"
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
+
+    # Dicek paling awal, sebelum menyentuh DB: tanpa subprocess, choros tidak
+    # bisa menjalankan satu harness pun. Lebih baik menolak boot dengan satu
+    # baris perbaikan daripada menerima tugas lalu meledakkan semuanya.
+    loop = asyncio.get_running_loop()
+    if not loop_supports_subprocess(loop):
+        raise RuntimeError(subprocess_unsupported_message(loop))
+
     await apply_migrations()
 
     recovered_count = await runner.recover_interrupted_tasks()

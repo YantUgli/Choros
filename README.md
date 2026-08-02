@@ -36,6 +36,16 @@ cp .env.example .env                  # isi CHOROS_SECRET_KEY dan DATABASE_URL
 
 Buka `http://127.0.0.1:8000`. Untuk auto-restart: `deploy/choros.service`.
 
+**Windows + `--reload`:** pakai `--loop asyncio:ProactorEventLoop`.
+
+```
+.venv\Scripts\python -m uvicorn app.main:app --reload --loop asyncio:ProactorEventLoop
+```
+
+uvicorn memilih SelectorEventLoop begitu `--reload` atau `--workers > 1` aktif, dan
+loop itu tidak bisa spawn subprocess sama sekali — artinya **semua** harness CLI
+mati. Tanpa flag ini app menolak start dengan pesan yang menyebut perbaikannya.
+
 ---
 
 ## Cara kerja satu tugas
