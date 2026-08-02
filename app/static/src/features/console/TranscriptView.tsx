@@ -1,148 +1,119 @@
-import { Badge } from "../../components/ds";
-import { Label } from "../../components/Label";
-import type { Session } from "../../data/fixtures";
+import { useEffect, useState } from "react";
+import { fetchTranscript } from "../../services/historyApi";
+import type { ConsoleState, StreamEvent, CascadeAttempt } from "../../state/types";
+import { StreamView } from "./StreamView";
+import { CascadePanel } from "./CascadePanel";
+import type { ConsoleEvent } from "../../state/consoleMachine";
+import { AttemptsPanel } from "./AttemptsPanel";
 
-/**
- * Transkrip sesi lama: percakapan, bukan log stream.
- * Chip "Jejak agent" di atas + pembatas `cascade: agent → alasan → target berikut`
- * di titik pergantian.
- */
-export function TranscriptView({ session }: { session: Session }) {
+function processEvents(events: ConsoleEvent[]): StreamEvent[] {
+  const stream: StreamEvent[] = [];
+  
+  for (const ev of events) {
+    if (ev.type === "LOG" || ev.type === "QUESTION") {
+      stream.push(ev.event);
+    }
+    if (ev.type === "LOG_DELTA") {
+       stream.push({
+           id: ev.streamId,
+           ts: ev.ts,
+           kind: "output",
+           source: ev.source,
+           text: ev.text
+       });
+    }
+  }
+  
+  return stream;
+}
+
+export function TranscriptView({ taskId }: { taskId: number }) {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [data, setData] = useState<{ stream: StreamEvent[]; attempts: CascadeAttempt[] } | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setError(null);
+    
+    fetchTranscript(taskId)
+      .then((res) => {
+        if (active) {
+          const cascadeAttempts: CascadeAttempt[] = res.attempts.map((a) => ({
+            index: a.index,
+            target: a.model ? `${a.agent}/${a.model}` : a.agent,
+            outcome: a.status === "skipped" ? "skipped" : "failed",
+            reason: a.status,
+            note: a.status === "skipped" ? "dilewati" : "jatuh ke target berikut"
+          }));
+
+          setData({
+             stream: processEvents(res.events),
+             attempts: cascadeAttempts
+          });
+          setLoading(false);
+        }
+      })
+      .catch((err) => {
+        if (active) {
+          setError(String(err));
+          setLoading(false);
+        }
+      });
+      
+    return () => {
+      active = false;
+    };
+  }, [taskId]);
+
+  if (loading) {
+    return <div style={{ padding: "var(--space-4)" }}>Memuat transkrip...</div>;
+  }
+
+  if (error) {
+    return (
+      <div style={{ padding: "var(--space-4)", color: "var(--limit)" }}>
+        Gagal memuat transkrip: {error}
+      </div>
+    );
+  }
+
+  if (!data) return null;
+
+  const mockState: ConsoleState = {
+    status: "done",
+    runId: taskId,
+    stream: data.stream,
+    attempts: data.attempts,
+    request: null,
+    route: "",
+    paused: false,
+    autoScroll: false,
+    question: null,
+    failure: null,
+    halt: null,
+    result: null,
+    usage: { in: 0, out: 0, cache: 0, total: 0 },
+    planReused: false,
+  };
+
+  const showCascade = data.attempts.some((a) => a.outcome === "failed" || a.outcome === "skipped");
+
   return (
     <>
-      <div
-        style={{
-          flex: "none",
-          padding: "10px var(--space-4)",
-          borderBottom: "1px solid var(--line)",
-          background: "var(--panel)",
-          display: "flex",
-          alignItems: "center",
-          gap: "var(--space-2)",
-          flexWrap: "wrap",
-        }}
-      >
-        <Label style={{ marginRight: "var(--space-1)" }}>Jejak agent</Label>
-        {session.chain.map((c, i) => (
-          <div key={`${c.label}-${i}`} style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
-            <Badge tone={c.tone}>{c.label}</Badge>
-            {c.reason && (
-              <span style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-12)", color: "var(--limit)" }}>
-                {c.reason} →
-              </span>
-            )}
-          </div>
-        ))}
-      </div>
-
-      <div
-        className="ov"
-        style={{
-          flex: 1,
-          minHeight: 0,
-          overflow: "auto",
-          padding: "14px var(--space-4)",
-          display: "flex",
-          flexDirection: "column",
-          gap: 10,
-        }}
-      >
-        {session.messages.map((m, i) => {
-          if (m.kind === "user") {
-            return (
-              <div
-                key={i}
-                style={{
-                  alignSelf: "flex-end",
-                  maxWidth: "78%",
-                  background: "var(--panel-2)",
-                  border: "1px solid var(--line)",
-                  borderRadius: "var(--radius-sm)",
-                  padding: "8px 10px",
-                  fontSize: "var(--fs-13)",
-                  lineHeight: 1.5,
-                }}
-              >
-                {m.text}
-              </div>
-            );
-          }
-          if (m.kind === "switch") {
-            return (
-              <div
-                key={i}
-                style={{
-                  alignSelf: "center",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "var(--space-2)",
-                  border: "1px solid var(--limit)",
-                  background: "var(--limit-fill)",
-                  borderRadius: "var(--radius-sm)",
-                  padding: "6px 10px",
-                  fontFamily: "var(--font-mono)",
-                  fontSize: "var(--fs-12)",
-                  color: "var(--text)",
-                  flexWrap: "wrap",
-                  justifyContent: "center",
-                }}
-              >
-                <span style={{ color: "var(--limit)" }}>cascade</span>
-                <span>{m.from}</span>
-                <span style={{ color: "var(--limit)" }}>{m.reason}</span>
-                <span>→</span>
-                <span style={{ fontWeight: 600 }}>{m.to}</span>
-              </div>
-            );
-          }
-          if (m.kind === "note") {
-            return (
-              <div
-                key={i}
-                style={{
-                  alignSelf: "center",
-                  fontFamily: "var(--font-mono)",
-                  fontSize: "var(--fs-12)",
-                  color: "var(--muted)",
-                  textAlign: "center",
-                }}
-              >
-                {m.text}
-              </div>
-            );
-          }
-          return (
-            <div
-              key={i}
-              style={{
-                alignSelf: "flex-start",
-                maxWidth: "82%",
-                display: "flex",
-                flexDirection: "column",
-                gap: "var(--space-1)",
-              }}
-            >
-              <span style={{ fontFamily: "var(--font-mono)", fontSize: "var(--fs-12)", color: "var(--brand)" }}>
-                {m.src}
-              </span>
-              <div
-                style={{
-                  background: "var(--panel)",
-                  border: "1px solid var(--line)",
-                  borderRadius: "var(--radius-sm)",
-                  padding: "8px 10px",
-                  fontFamily: "var(--font-mono)",
-                  fontSize: "var(--fs-13)",
-                  lineHeight: 1.55,
-                  color: "var(--text)",
-                }}
-              >
-                {m.text}
-              </div>
-            </div>
-          );
-        })}
-      </div>
+      <StreamView
+        state={mockState}
+        onReply={() => {}}
+        onDefer={() => {}}
+        onScrollAway={() => {}}
+        onJumpLatest={() => {}}
+      />
+      
+      <AttemptsPanel taskId={taskId} onEmpty={() => {}} />
+      {showCascade && (
+        <CascadePanel runId={taskId} attempts={data.attempts} status="done" />
+      )}
     </>
   );
 }

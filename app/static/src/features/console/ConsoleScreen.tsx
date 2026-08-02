@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Badge, Button, Select, StatusDot, type BadgeTone, type DotStatus } from "../../components/ds";
 import { Meta } from "../../components/Label";
-import { SESSIONS } from "../../data/fixtures";
 import { SCENARIOS, type ScenarioId } from "../../services/daemon";
 import { useModals } from "../../state/modals";
 import {
@@ -64,8 +63,7 @@ export function ConsoleScreen({
   const pill = PILLS[state.status];
   const busy = BUSY_STATUSES.includes(state.status);
   const canCancel = CANCELLABLE_STATUSES.includes(state.status);
-  const session = SESSIONS.find((s) => s.id === selectedSession) ?? null;
-  const live = session === null;
+  const live = selectedSession === null;
   const category = state.request?.category ?? "coding_complex";
 
   // ⌘↵ / Ctrl↵ dari mana pun di layar Console: submit ditangani ComposePanel;
@@ -119,6 +117,7 @@ export function ConsoleScreen({
           liveCategory={category}
           liveLabel={pill[1]}
           liveDot={pill[2]}
+          isTerminal={terminal}
         />
       </div>
 
@@ -200,7 +199,7 @@ export function ConsoleScreen({
             </>
           ) : (
             <>
-              <StatusDot status={session.dot} />
+              <StatusDot status="idle" />
               <span
                 style={{
                   fontSize: "var(--fs-13)",
@@ -209,13 +208,8 @@ export function ConsoleScreen({
                   whiteSpace: "nowrap",
                 }}
               >
-                Riwayat sesi #{session.id}
+                Riwayat sesi #{selectedSession}
               </span>
-              <Meta
-                style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-              >
-                {session.category} · {session.mode}
-              </Meta>
               <div style={{ marginLeft: "auto", flex: "none" }}>
                 <Button variant="ghost" size="sm" onClick={() => setSelectedSession(null)}>
                   ← kembali ke run aktif
@@ -225,8 +219,8 @@ export function ConsoleScreen({
           )}
         </div>
 
-        {session ? (
-          <TranscriptView session={session} />
+        {selectedSession !== null ? (
+          <TranscriptView taskId={selectedSession} />
         ) : (
           <>
             <StreamView

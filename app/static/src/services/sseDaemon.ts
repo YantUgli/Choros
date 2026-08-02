@@ -20,7 +20,7 @@ import type { ConsoleEvent } from "../state/consoleMachine";
 import type { RunRequest, StreamEvent, Usage } from "../state/types";
 import { eventId, fmt, nowTs, type DaemonClient, type DaemonSink } from "./daemon";
 
-interface WireEvent {
+export interface WireEvent {
   type:
     | "thinking"
     | "tool_call"
@@ -38,7 +38,7 @@ interface WireEvent {
   data: Record<string, unknown>;
 }
 
-interface TaskOut {
+export interface WireTaskOut {
   id: number;
   prompt: string;
   category: string;
@@ -309,7 +309,7 @@ export function createSseDaemon(sink: DaemonSink, opts: SseDaemonOptions = {}): 
   const reconcile = async (id: number) => {
     if (questionPending) return; // menunggu jawaban user — bukan akhir run
     try {
-      const task = await json<TaskOut>(await fetch(`${base}/api/tasks/${id}`));
+      const task = await json<WireTaskOut>(await fetch(`${base}/api/tasks/${id}`));
       if (task.status === "ok") {
         const duration =
           task.created_at && task.finished_at
@@ -412,7 +412,7 @@ export function createSseDaemon(sink: DaemonSink, opts: SseDaemonOptions = {}): 
     if (taskId === null) return;
     questionPending = false;
     partialId = null;
-    void json<TaskOut>(
+    void json<WireTaskOut>(
       fetch(`${base}/api/tasks/${taskId}/reply`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -427,7 +427,7 @@ export function createSseDaemon(sink: DaemonSink, opts: SseDaemonOptions = {}): 
     submit(request) {
       questionPending = false;
       partialId = null;
-      void json<TaskOut>(
+      void json<WireTaskOut>(
         fetch(`${base}/api/tasks`, {
           method: "POST",
           headers: { "content-type": "application/json" },
