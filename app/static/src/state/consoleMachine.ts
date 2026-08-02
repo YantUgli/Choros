@@ -40,6 +40,8 @@ export type ConsoleEvent =
   | { type: "QUESTION"; event: StreamEvent }
   /** user menjawab pertanyaan */
   | { type: "REPLY"; text: string; ts: string }
+  /** user mengirim lanjutan setelah run selesai — tugas baru yang me-resume sesi yang sama */
+  | { type: "FOLLOW_UP"; text: string; ts: string }
   /** user menyerahkan keputusan ke agent */
   | { type: "DEFER"; ts: string }
   /** target gagal: 429/limit, < quality_floor, atau error yang masih bisa dipulihkan */
@@ -110,6 +112,7 @@ export const TRANSITIONS: Record<ConsoleStatus, Partial<Record<ConsoleEventType,
   },
   done: {
     SUBMIT: "queued",
+    FOLLOW_UP: "queued",
     RESET: "idle",
   },
   halted: {
@@ -273,6 +276,24 @@ export function consoleReducer(state: ConsoleState, event: ConsoleEvent): Consol
         question: null,
         autoScroll: true,
         stream: append(state, line(event.ts, "info", "choros", "keputusan diserahkan ke agent — melanjutkan")),
+      };
+
+    case "FOLLOW_UP":
+      return {
+        ...state,
+        status: next,
+        // Strip Hasil run sebelumnya tidak boleh menggantung di atas run yang baru.
+        result: null,
+        question: null,
+        // Rantai target dihitung ulang dari nol untuk tugas lanjutan.
+        attempts: [],
+        route: "—",
+        usage: EMPTY_USAGE,
+        planReused: false,
+        autoScroll: true,
+        // stream SENGAJA dipertahankan: inti follow-up adalah percakapan yang
+        // menyambung. Mengosongkannya akan menghapus jawaban yang sedang dibalas.
+        stream: append(state, line(event.ts, "output", "you", `› ${event.text}`)),
       };
 
     case "TARGET_FAILED": {

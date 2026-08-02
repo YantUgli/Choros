@@ -17,6 +17,8 @@ export interface DaemonClient {
   submit(request: RunRequest, runId: number): void;
   /** Jawab event `question` yang sedang menahan run. */
   reply(text: string): void;
+  /** Lanjutan setelah run selesai — resume sesi yang sama, tugas baru. */
+  followUp(text: string): void;
   /** Serahkan keputusan ke agent — run lanjut tanpa jawaban user. */
   defer(): void;
   /** Hentikan run berjalan. Daemon berhenti mengirim event. */

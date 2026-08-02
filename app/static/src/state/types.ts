@@ -88,7 +88,6 @@ export interface Usage {
 
 export interface RunResult {
   summary: string;
-  target: string;
   /** path worktree (mode otonom) atau working dir (mode interaktif) */
   worktree: string;
   /** true = worktree terisolasi → diff / merge / discard tersedia */

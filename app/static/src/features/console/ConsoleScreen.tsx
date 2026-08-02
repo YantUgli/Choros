@@ -13,6 +13,7 @@ import {
 import type { ConsoleActions } from "../../state/useConsole";
 import { CascadePanel } from "./CascadePanel";
 import { ComposePanel } from "./ComposePanel";
+import { FollowUpStrip } from "./FollowUpStrip";
 import { HistoryList } from "./HistoryList";
 import { ErrorStrip, HaltedStrip, ResultStrip } from "./ResultStrips";
 import { StreamView } from "./StreamView";
@@ -226,12 +227,15 @@ export function ConsoleScreen({
             )}
 
             {state.status === "done" && state.result && (
-              <ResultStrip
-                result={state.result}
-                onDiff={() => modals.openDiff(state.runId, actions.reset)}
-                onMerge={actions.reset}
-                onDiscard={actions.reset}
-              />
+              <>
+                <ResultStrip
+                  result={state.result}
+                  onDiff={() => modals.openDiff(state.runId, actions.reset)}
+                  onMerge={actions.reset}
+                  onDiscard={actions.reset}
+                />
+                <FollowUpStrip onSend={actions.followUp} />
+              </>
             )}
 
             {state.status === "halted" && state.halt && (

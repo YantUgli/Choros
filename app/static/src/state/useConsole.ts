@@ -61,6 +61,7 @@ export function useConsole() {
     () => ({
       submit,
       reply: (text: string) => daemonRef.current?.reply(text),
+      followUp: (text: string) => daemonRef.current?.followUp(text),
       defer: () => daemonRef.current?.defer(),
       cancel: () => daemonRef.current?.cancel(),
       resume: () => rerun("RESUME"),

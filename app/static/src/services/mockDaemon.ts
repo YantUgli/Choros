@@ -158,7 +158,6 @@ function finishSteps(target: string): Step[] {
           result: {
             summary:
               "Refactor selesai: token dipindah ke httponly cookie, 3 file berubah, typecheck lolos.",
-            target,
             worktree: `choros/run-38`,
             isolated: true,
             filesChanged: 3,
@@ -338,6 +337,18 @@ export function createMockDaemon(sink: DaemonSink, opts: MockDaemonOptions): Dae
     defer() {
       sink({ type: "DEFER", ts: nowTs() });
       resume();
+    },
+    followUp(text) {
+      sink({ type: "FOLLOW_UP", text, ts: nowTs() });
+      clear();
+      // Tugas lanjutan = run baru: mesin dinyalakan lagi dan akumulator usage
+      // dinolkan, sama seperti submit(). resume() saja tidak cukup — `live`
+      // sudah false begitu skrip run sebelumnya habis.
+      if (ctx) ctx.usage = { in: 0, out: 0, cache: 0, total: 0 };
+      steps = script(opts.getScenario());
+      cursor = 0;
+      live = true;
+      pump();
     },
     cancel() {
       clear();

@@ -336,7 +336,6 @@ export function createSseDaemon(sink: DaemonSink, opts: SseDaemonOptions = {}): 
           type: "FINAL",
           result: {
             summary: task.final_output?.trim() || "Tugas selesai — tidak ada output teks.",
-            target: "—",
             worktree: task.workspace_path ?? task.project_path ?? "",
             isolated,
             filesChanged: files,
@@ -406,6 +405,24 @@ export function createSseDaemon(sink: DaemonSink, opts: SseDaemonOptions = {}): 
     };
   };
 
+  const DEFER_ANSWER = "Lanjutkan dengan asumsi terbaikmu, tidak perlu bertanya.";
+
+  /** POST /reply → tugas lanjutan yang me-resume sesi yang sama; stream pindah ke id baru. */
+  const resume = (answer: string, gagal: string) => {
+    if (taskId === null) return;
+    questionPending = false;
+    partialId = null;
+    void json<TaskOut>(
+      fetch(`${base}/api/tasks/${taskId}/reply`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ answer }),
+      }),
+    )
+      .then((task) => openStream(task.id))
+      .catch((err: unknown) => fail(`${gagal} — ${String(err)}`));
+  };
+
   return {
     submit(request) {
       questionPending = false;
@@ -430,34 +447,17 @@ export function createSseDaemon(sink: DaemonSink, opts: SseDaemonOptions = {}): 
 
     reply(text) {
       sink({ type: "REPLY", text, ts: nowTs() });
-      if (taskId === null) return;
-      questionPending = false;
-      // Follow-up = tugas baru yang me-resume sesi yang sama (PRD §8),
-      // jadi stream berpindah ke id baru sementara tampilan stream tetap utuh.
-      void json<TaskOut>(
-        fetch(`${base}/api/tasks/${taskId}/reply`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ answer: text }),
-        }),
-      )
-        .then((task) => openStream(task.id))
-        .catch((err: unknown) => fail(`follow-up gagal — ${String(err)}`));
+      resume(text, "follow-up gagal");
     },
 
     defer() {
       sink({ type: "DEFER", ts: nowTs() });
-      if (taskId === null) return;
-      questionPending = false;
-      void json<TaskOut>(
-        fetch(`${base}/api/tasks/${taskId}/reply`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ answer: "Lanjutkan dengan asumsi terbaikmu, tidak perlu bertanya." }),
-        }),
-      )
-        .then((task) => openStream(task.id))
-        .catch((err: unknown) => fail(`follow-up gagal — ${String(err)}`));
+      resume(DEFER_ANSWER, "follow-up gagal");
+    },
+
+    followUp(text) {
+      sink({ type: "FOLLOW_UP", text, ts: nowTs() });
+      resume(text, "lanjutan gagal");
     },
 
     cancel() {

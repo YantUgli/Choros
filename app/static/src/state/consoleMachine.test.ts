@@ -124,7 +124,6 @@ describe("reducer — perilaku per state", () => {
       type: "FINAL",
       result: {
         summary: "selesai",
-        target: "antigravity/default",
         worktree: "choros/run-38",
         isolated: true,
         filesChanged: 3,
@@ -219,7 +218,6 @@ describe("reducer — perilaku per state", () => {
       type: "FINAL",
       result: {
         summary: "ok",
-        target: "claude/sonnet",
         worktree: "choros/run-38",
         isolated: true,
         filesChanged: 3,
@@ -293,5 +291,47 @@ describe("reducer — perilaku per state", () => {
       event: ev("usage", "in=2,800 out=378 cache=0 total=3,178 tok", "usage"),
     });
     expect(s.usage.total).toBe(3178);
+  });
+});
+
+describe("FOLLOW_UP", () => {
+  const finished = run(running(), {
+    type: "FINAL",
+    result: { summary: "ok", worktree: "w", isolated: true, filesChanged: 0, added: 0, removed: 0, tokens: 0, duration: "1s" },
+    events: [ev("status", "done")],
+  });
+
+  it("FOLLOW_UP dari done -> status === 'queued'", () => {
+    expect(transition("done", "FOLLOW_UP")).toBe("queued");
+  });
+
+  it("FOLLOW_UP mempertahankan stream -> panjang stream bertambah 1, baris lama utuh", () => {
+    const beforeLen = finished.stream.length;
+    const next = consoleReducer(finished, { type: "FOLLOW_UP", text: "lanjutkan", ts: "14:05" });
+    expect(next.stream).toHaveLength(beforeLen + 1);
+    expect(next.stream.at(-1)?.text).toBe("› lanjutkan");
+    expect(next.stream[0]).toEqual(finished.stream[0]);
+  });
+
+  it("FOLLOW_UP mengosongkan hasil & rantai -> result === null, attempts.length === 0, usage.total === 0", () => {
+    const next = consoleReducer(finished, { type: "FOLLOW_UP", text: "lanjutkan", ts: "14:05" });
+    expect(next.result).toBeNull();
+    expect(next.attempts).toHaveLength(0);
+    expect(next.usage.total).toBe(0);
+  });
+
+  it("FOLLOW_UP dari running / idle / halted / error -> state tidak berubah sama sekali", () => {
+    for (const s of ["idle", "queued", "running", "waiting_for_input", "cascading", "halted", "error"] as ConsoleStatus[]) {
+      expect(transition(s, "FOLLOW_UP")).toBeNull();
+    }
+  });
+
+  it("SLOT_FREE setelah FOLLOW_UP -> menyeed attempt #1 lagi, route terisi target baru", () => {
+    const next = consoleReducer(finished, { type: "FOLLOW_UP", text: "lanjut", ts: "14:05" });
+    const started = consoleReducer(next, { type: "SLOT_FREE", target: "claude/sonnet", ts: "14:06" });
+    expect(started.route).toBe("claude/sonnet");
+    expect(started.attempts).toHaveLength(1);
+    expect(started.attempts[0]?.index).toBe(1);
+    expect(started.attempts[0]?.target).toBe("claude/sonnet");
   });
 });
