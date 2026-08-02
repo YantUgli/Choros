@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { Button, Panel } from "../../components/ds";
-import { AGENTS, type AgentRow } from "../../data/fixtures";
+import { createAgent, deleteAgent, fetchAgents, toAgentRows, updateAgent } from "../../services/agentApi";
 import { useModals } from "../../state/modals";
+import { useApiResource } from "../../state/useApiResource";
 
 const grid = {
   display: "grid",
@@ -11,37 +12,89 @@ const grid = {
 
 export function AgentsScreen() {
   const modals = useModals();
-  const [agents, setAgents] = useState<AgentRow[]>(AGENTS);
+  const [res, reload] = useApiResource(fetchAgents);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const upsert = (row: AgentRow, replaceIndex?: number) => {
-    setAgents((prev) => {
-      if (replaceIndex != null) return prev.map((a, i) => (i === replaceIndex ? row : a));
-      const idx = prev.findIndex((a) => a.name === row.name);
-      return idx >= 0 ? prev.map((a, i) => (i === idx ? row : a)) : [...prev, row];
-    });
-  };
+  if (res.phase === "loading") {
+    return <div style={{ padding: "var(--space-4)" }}>Memuat...</div>;
+  }
+  if (res.phase === "error") {
+    return (
+      <div style={{ padding: "var(--space-4)", color: "var(--limit)" }}>
+        {res.status === 401 ? "belum login" : `daemon tidak menjawab: ${res.message}`}
+        <br />
+        <Button onClick={reload} style={{ marginTop: 10 }}>Coba lagi</Button>
+      </div>
+    );
+  }
 
-  const edit = (a: AgentRow, index: number) =>
+  const agents = toAgentRows(res.data);
+
+  const edit = (id: number, name: string, adapter: string, model: string, active: boolean) =>
     modals.openAgent(
       {
-        title: `Ubah agent — ${a.name}`,
-        name: a.name,
-        adapter: a.adapter,
-        model: a.model === "—" ? null : a.model,
-        active: a.active,
+        title: `Ubah agent — ${name}`,
+        name,
+        adapter,
+        model: model === "—" ? null : model,
+        active,
       },
-      (draft) =>
-        upsert(
-          { name: draft.name || "agent", adapter: draft.adapter, model: draft.model || "—", active: draft.active },
-          index,
-        ),
+      async (draft) => {
+        setErrorMsg(null);
+        try {
+          await updateAgent(id, {
+            name: draft.name || "agent",
+            adapter_type: draft.adapter,
+            default_model: draft.model || null,
+            base_url: null, // UI saat ini tidak punya input ini
+            config: {},
+            is_active: draft.active,
+          });
+          reload();
+        } catch (e: any) {
+          setErrorMsg(e.message || String(e));
+        }
+      },
     );
+
+  const create = () =>
+    modals.openAgent(
+      { title: "Agent baru" },
+      async (draft) => {
+        setErrorMsg(null);
+        try {
+          await createAgent({
+            name: draft.name || "agent",
+            adapter_type: draft.adapter,
+            default_model: draft.model || null,
+            base_url: null,
+            config: {},
+            is_active: draft.active,
+          });
+          reload();
+        } catch (e: any) {
+          setErrorMsg(e.message || String(e));
+        }
+      },
+    );
+
+  const remove = async (id: number) => {
+    if (!window.confirm("Yakin ingin menghapus agent ini?")) return;
+    setErrorMsg(null);
+    try {
+      await deleteAgent(id);
+      reload();
+    } catch (e: any) {
+      setErrorMsg(`Gagal menghapus: ${e.message || String(e)}`);
+    }
+  };
 
   return (
     <div className="ov" style={{ flex: 1, minWidth: 0, padding: "var(--space-4)", overflow: "auto" }}>
       <div style={{ maxWidth: 880 }}>
         <Panel title="Agents" subtitle="adapter resmi per layanan — frekuensi rendah, waktu-setup">
           <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
+            {errorMsg && <div style={{ color: "var(--limit)", fontSize: "var(--fs-13)", marginBottom: "var(--space-2)" }}>{errorMsg}</div>}
             <div
               style={{
                 ...grid,
@@ -60,9 +113,9 @@ export function AgentsScreen() {
               <span />
             </div>
 
-            {agents.map((a, i) => (
+            {agents.map((a) => (
               <div
-                key={a.name}
+                key={a.id}
                 style={{
                   ...grid,
                   alignItems: "center",
@@ -78,7 +131,7 @@ export function AgentsScreen() {
                 <span style={{ fontSize: "var(--fs-12)", display: "flex", gap: "var(--space-2)" }}>
                   <button
                     type="button"
-                    onClick={() => edit(a, i)}
+                    onClick={() => edit(a.id, a.name, a.adapter, a.model, a.active)}
                     style={{
                       color: "var(--brand)",
                       cursor: "pointer",
@@ -93,7 +146,7 @@ export function AgentsScreen() {
                   <span style={{ color: "var(--muted)" }}>·</span>
                   <button
                     type="button"
-                    onClick={() => setAgents((prev) => prev.filter((_, j) => j !== i))}
+                    onClick={() => remove(a.id)}
                     className="choros-danger-link"
                     style={{
                       color: "var(--muted)",
@@ -111,21 +164,8 @@ export function AgentsScreen() {
               </div>
             ))}
 
-            <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap" }}>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() =>
-                  modals.openAgent({ title: "Agent baru" }, (draft) =>
-                    upsert({
-                      name: draft.name || "agent",
-                      adapter: draft.adapter,
-                      model: draft.model || "—",
-                      active: draft.active,
-                    }),
-                  )
-                }
-              >
+            <div style={{ display: "flex", alignItems: "center", gap: "var(--space-3)", flexWrap: "wrap", marginTop: "var(--space-2)" }}>
+              <Button variant="secondary" size="sm" onClick={create}>
                 + agent baru
               </Button>
               <span style={{ fontSize: "var(--fs-12)", color: "var(--muted)" }}>
