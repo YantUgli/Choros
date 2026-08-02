@@ -36,7 +36,6 @@ export interface ComposeProps {
 }
 
 export function ComposePanel({ busy, canCancel, onRun, onCancel }: ComposeProps) {
-  const modals = useModals();
   const [prompt, setPrompt] = useState("");
   const [category, setCategory] = useState<TaskCategory>("coding_complex");
   const [mode, setMode] = useState<TaskMode>("interaktif");
@@ -44,6 +43,7 @@ export function ComposePanel({ busy, canCancel, onRun, onCancel }: ComposeProps)
   const [floor, setFloor] = useState("");
   const [noIsolation, setNoIsolation] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);
+  const modals = useModals();
   
   const [catsRes] = useApiResource(fetchCategories);
   const categories = catsRes.phase === "ready" ? catsRes.data : catsRes.phase === "error" ? [{ value: category, label: "gagal memuat" }] : [{ value: category, label: "memuat..." }];
