@@ -29,6 +29,11 @@ export type ConsoleEvent =
   | { type: "SLOT_FREE"; target: string; ts: string }
   /** satu baris stream biasa (thinking / tool_call / file_edit / output / info) */
   | { type: "LOG"; event: StreamEvent }
+  /**
+   * Potongan output yang menetes (adapter mengirim `partial`). Digabung ke baris
+   * berjalan yang sama supaya console terasa seperti terminal, bukan banjir baris.
+   */
+  | { type: "LOG_DELTA"; streamId: string; ts: string; source: string; text: string }
   /** usage menetes per event */
   | { type: "USAGE"; usage: Usage; event: StreamEvent }
   /** agent bertanya (mode interaktif) */
@@ -56,6 +61,8 @@ export type ConsoleEvent =
   /** done/halted/error → kembali ke idle (merge / discard / buang) */
   | { type: "RESET" }
   // --- event tampilan: tidak mengubah status ---
+  /** id run sebenarnya, diketahui setelah daemon membuat tugas */
+  | { type: "RUN_ID"; runId: number }
   | { type: "TOGGLE_PAUSE" }
   | { type: "CLEAR_STREAM" }
   | { type: "SCROLL_AWAY" }
@@ -73,6 +80,11 @@ export const TRANSITIONS: Record<ConsoleStatus, Partial<Record<ConsoleEventType,
   },
   queued: {
     SLOT_FREE: "running",
+    // Rantai bisa mulai berjalan sebelum ada target yang benar-benar start:
+    // target di bawah quality_floor / kehabisan kuota dilewati lebih dulu.
+    TARGET_FAILED: "cascading",
+    // …dan kalau SEMUA target dilewati, run berhenti tanpa pernah running.
+    CHAIN_EXHAUSTED: "halted",
     CANCEL: "halted",
     FATAL: "error",
   },
@@ -115,7 +127,9 @@ export const TRANSITIONS: Record<ConsoleStatus, Partial<Record<ConsoleEventType,
 /** Event tampilan — sah di status apa pun, tidak menggeser status. */
 const VIEW_EVENTS: ConsoleEventType[] = [
   "LOG",
+  "LOG_DELTA",
   "USAGE",
+  "RUN_ID",
   "TOGGLE_PAUSE",
   "CLEAR_STREAM",
   "SCROLL_AWAY",
@@ -207,6 +221,29 @@ export function consoleReducer(state: ConsoleState, event: ConsoleEvent): Consol
     case "LOG":
       return { ...state, stream: append(state, event.event) };
 
+    case "LOG_DELTA": {
+      // Dicari mundur, bukan hanya baris terakhir: event `usage` sering menyela
+      // aliran output, dan blok output harus tetap jadi satu baris utuh.
+      const at = state.stream.findLastIndex((e) => e.id === event.streamId);
+      if (at >= 0) {
+        const target = state.stream[at];
+        if (!target) return state;
+        const stream = [...state.stream];
+        stream[at] = { ...target, text: target.text + event.text };
+        return { ...state, stream };
+      }
+      return {
+        ...state,
+        stream: append(state, {
+          id: event.streamId,
+          ts: event.ts,
+          kind: "output",
+          source: event.source,
+          text: event.text,
+        }),
+      };
+    }
+
     case "USAGE":
       return { ...state, usage: event.usage, stream: append(state, event.event) };
 
@@ -272,7 +309,14 @@ export function consoleReducer(state: ConsoleState, event: ConsoleEvent): Consol
       const attempts = state.attempts.map((a) =>
         a.outcome === "running" || a.outcome === "trying" ? { ...a, outcome: "ok" as const, note: "selesai di target ini" } : a,
       );
-      return { ...state, status: next, result: event.result, attempts, stream: append(state, ...event.events) };
+      return {
+        ...state,
+        status: next,
+        // Daemon nyata tidak menghitung token; ambil dari usage yang sudah menetes.
+        result: { ...event.result, tokens: event.result.tokens || state.usage.total },
+        attempts,
+        stream: append(state, ...event.events),
+      };
     }
 
     case "FATAL":
@@ -308,6 +352,9 @@ export function consoleReducer(state: ConsoleState, event: ConsoleEvent): Consol
 
     case "RESET":
       return { ...initialConsoleState, runId: state.runId, status: next };
+
+    case "RUN_ID":
+      return { ...state, runId: event.runId };
 
     case "TOGGLE_PAUSE":
       return { ...state, paused: !state.paused };

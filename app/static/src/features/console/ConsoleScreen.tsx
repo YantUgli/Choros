@@ -35,12 +35,15 @@ export function ConsoleScreen({
   actions,
   scenario,
   setScenario,
+  isMock,
   onOpenQuota,
 }: {
   state: ConsoleState;
   actions: ConsoleActions;
   scenario: ScenarioId;
   setScenario: (s: ScenarioId) => void;
+  /** true = mock daemon; selector skenario hanya muncul di mode ini. */
+  isMock: boolean;
   onOpenQuota: () => void;
 }) {
   const modals = useModals();
@@ -136,7 +139,7 @@ export function ConsoleScreen({
                   whiteSpace: "nowrap",
                 }}
               >
-                run #{state.runId} · {category} · {state.route}
+                run #{state.runId || "—"} · {category} · {state.route}
               </Meta>
               <Badge tone={pill[0]}>{pill[1]}</Badge>
               <div
@@ -148,24 +151,26 @@ export function ConsoleScreen({
                   flex: "none",
                 }}
               >
-                <label
-                  style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}
-                  title="skrip yang diputar mock daemon untuk run berikutnya"
-                >
-                  <Meta>mock</Meta>
-                  <Select
-                    size="sm"
-                    value={scenario}
-                    onChange={(e) => setScenario(e.target.value as ScenarioId)}
-                    aria-label="skenario mock daemon"
+                {isMock && (
+                  <label
+                    style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}
+                    title="skrip yang diputar mock daemon untuk run berikutnya"
                   >
-                    {SCENARIOS.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.label}
-                      </option>
-                    ))}
-                  </Select>
-                </label>
+                    <Meta>mock</Meta>
+                    <Select
+                      size="sm"
+                      value={scenario}
+                      onChange={(e) => setScenario(e.target.value as ScenarioId)}
+                      aria-label="skenario mock daemon"
+                    >
+                      {SCENARIOS.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.label}
+                        </option>
+                      ))}
+                    </Select>
+                  </label>
+                )}
                 <Button variant="ghost" size="sm" onClick={actions.togglePause}>
                   {state.paused ? "resume" : "pause"}
                 </Button>

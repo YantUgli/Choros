@@ -23,24 +23,51 @@ export function ResultStrip({
 }) {
   return (
     <div style={{ ...strip, display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
-      <Label>Hasil · worktree review</Label>
-      <span style={{ fontSize: "var(--fs-13)", color: "var(--text)" }}>{result.summary}</span>
+      <Label>{result.isolated ? "Hasil · worktree review" : "Hasil"}</Label>
+      <div
+        className="ov"
+        style={{
+          fontSize: "var(--fs-13)",
+          color: "var(--text)",
+          lineHeight: 1.5,
+          maxHeight: 92,
+          overflow: "auto",
+          whiteSpace: "pre-wrap",
+        }}
+      >
+        {result.summary}
+      </div>
       <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", flexWrap: "wrap" }}>
-        <Badge tone="neutral">worktree {result.worktree}</Badge>
+        {result.worktree && (
+          <Badge tone="neutral">
+            {result.isolated ? "worktree" : "workdir"} {result.worktree}
+          </Badge>
+        )}
         <Meta>
-          +{result.added} −{result.removed} · {result.filesChanged} file ·{" "}
+          {/* stat diff hanya jujur kalau worktree-nya memang terisolasi */}
+          {result.isolated ? `+${result.added} −${result.removed} · ${result.filesChanged} file · ` : ""}
           {result.tokens.toLocaleString("en-US")} tok · {result.duration}
         </Meta>
         <div style={{ marginLeft: "auto", display: "flex", gap: "var(--space-2)" }}>
-          <Button variant="ghost" size="sm" onClick={onDiff}>
-            lihat diff
-          </Button>
-          <Button variant="secondary" size="sm" onClick={onMerge}>
-            merge
-          </Button>
-          <Button variant="danger" size="sm" onClick={onDiscard}>
-            discard
-          </Button>
+          {result.isolated ? (
+            <>
+              <Button variant="ghost" size="sm" onClick={onDiff}>
+                lihat diff
+              </Button>
+              <Button variant="secondary" size="sm" onClick={onMerge}>
+                merge
+              </Button>
+              <Button variant="danger" size="sm" onClick={onDiscard}>
+                discard
+              </Button>
+            </>
+          ) : (
+            // Mode interaktif menulis langsung ke working dir — tidak ada yang
+            // bisa di-merge/discard, dan endpoint diff backend memang menolaknya.
+            <Button variant="ghost" size="sm" onClick={onDiscard}>
+              tutup
+            </Button>
+          )}
         </div>
       </div>
     </div>

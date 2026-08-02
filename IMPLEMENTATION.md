@@ -132,6 +132,7 @@ sudah `done`/`halted`/`error`.
 | Status | Masuk lewat | Perilaku UI |
 |---|---|---|
 | `queued` | `SUBMIT` | pill `queued`, compose terkunci, baris status di stream |
+| ↳ | `TARGET_FAILED` / `CHAIN_EXHAUSTED` dari `queued` | rantai bisa jalan (dan habis) **sebelum** ada target yang start — mis. semua target di bawah `quality_floor` |
 | `running` | `SLOT_FREE`, `REPLY`/`DEFER`, `TARGET_SELECTED` | stream mengalir + auto-scroll, pill teal, usage menetes |
 | `waiting_for_input` | `QUESTION` | **auto-scroll berhenti**, kartu question di-pin, input balas ter-fokus otomatis, jump-to-latest muncul |
 | `cascading` | `TARGET_FAILED` | panel Percobaan Cascade tumbuh sebagai cerita berurut, pill oranye (`--limit`) — sengaja dibedakan tegas dari teal `running` |
@@ -151,11 +152,18 @@ jump-to-latest menampilkan berapa event baru direkam selama jeda.
 
 ### Tes
 
-`src/state/consoleMachine.test.ts` — 19 tes (`npm test`), menutup: jalur bahagia,
-loop cascade, mana saja yang cancellable (dicek terhadap **seluruh** 8 status),
-penolakan event telat di state akhir, penolakan `SUBMIT` selama daemon memegang
-run, event tampilan yang tidak boleh menggeser status, plus perilaku reducer
-(pin question, auto-scroll, penumpukan attempt, pembekuan stream setelah `FATAL`).
+37 tes (`npm test`) di dua berkas:
+
+- `src/state/consoleMachine.test.ts` (21) — jalur bahagia, loop cascade, mana saja
+  yang cancellable (dicek terhadap **seluruh** 8 status), penolakan event telat di
+  state akhir, penolakan `SUBMIT` selama daemon memegang run, event tampilan yang
+  tidak boleh menggeser status, plus perilaku reducer (pin question, auto-scroll,
+  penumpukan attempt, pembekuan stream setelah `FATAL`).
+- `src/services/sseDaemon.test.ts` (16) — pemetaan event kawat asli → state
+  machine, dijalankan lewat reducer sungguhan: transisi cascade, skip vs gagal,
+  countdown reset, penggabungan `output.partial`, nama field `usage` backend,
+  thinking multi-baris, dan jaminan bahwa status tanpa `transition` tidak
+  menggeser state.
 
 ### Titik integrasi stream nyata
 
@@ -163,30 +171,59 @@ run, event tampilan yang tidak boleh menggeser status, plus perilaku reducer
 `cancel`/`dispose`) dan `DaemonSink` (`(event: ConsoleEvent) => void`). UI tidak
 tahu event datang dari mana.
 
-- **Sekarang:** `src/services/mockDaemon.ts` — memutar skrip event realistis
-  dengan jeda waktu nyata. Enam skenario (`cascade + tanya`, `lancar`, `tanya`,
-  `cascade`, `rantai habis`, `crash`) bisa dipilih dari Select `mock` di header
-  Live console, sehingga tiap cabang state machine bisa dilihat langsung.
-- **Nanti:** `src/services/sseDaemon.ts` — sudah ditulis melawan kontrak yang
-  **sudah ada** di backend ini: `GET /api/tasks/{id}/stream` (SSE, payload
-  `app/events.py::Event.as_dict()`), `POST /api/tasks/{id}/reply`,
-  `POST /api/tasks/{id}/cancel`. `toConsoleEvents()` memetakan
-  `thinking/tool_call/file_edit/output/question/usage/error/status` ke event
-  machine, dan memakai `CASCADE_TRIGGERS` yang sama dengan orchestrator
-  (`rate_limit`, `auth`, `crash`, `not_installed`, `timeout`, `permission_denied`)
-  untuk membedakan cascade dari kegagalan fatal.
+- **Default (dipakai sekarang):** `src/services/sseDaemon.ts` — daemon nyata.
+- **Opsional:** `src/services/mockDaemon.ts` — skrip event palsu untuk menggarap
+  UI tanpa backend/kuota. Aktif dengan `VITE_CHOROS_DAEMON=mock npm run dev`.
+  Enam skenario (`cascade + tanya`, `lancar`, `tanya`, `cascade`, `rantai habis`,
+  `crash`) dipilih dari Select `mock` di header Live console — selector itu
+  **hanya muncul di mode mock**.
 
-**Penukarannya satu baris** di `src/state/useConsole.ts`:
-`createMockDaemon(dispatch, …)` → `createSseDaemon(dispatch, { createTask })`.
+Pemilihannya satu tempat, `src/state/useConsole.ts`; tidak ada komponen UI yang
+tahu bedanya.
 
-**Status jujur `sseDaemon.ts`: ditulis mengikuti kontrak backend, belum pernah
-diuji terhadap daemon yang berjalan.** Satu hal yang perlu ditambahkan backend
-sebelum dipakai penuh: transisi orkestrator (`started`, `target_selected`,
-`chain_exhausted`) saat ini hanya bisa dibaca dari kalimat `status.message`.
-`interpretStatus()` sengaja **tidak** menebak dari teks — selama event `status`
-belum membawa field eksplisit (`data.transition`, `data.target`, `data.attempt`,
-`data.reset_in`), baris status masuk sebagai log biasa. Lebih baik kehilangan
-animasi panel cascade daripada salah menyimpulkan state dari string.
+### Kontrak yang dipakai
+
+| Aksi | Endpoint |
+|---|---|
+| Jalankan | `POST /api/tasks` (`TaskIn`) |
+| Stream | `GET /api/tasks/{id}/stream` — SSE, replay event tersimpan lalu live, ditutup `{"type":"eof"}` |
+| Balas / serahkan | `POST /api/tasks/{id}/reply` `{answer}` |
+| Batalkan | `POST /api/tasks/{id}/cancel` |
+| Rekonsiliasi | `GET /api/tasks/{id}` saat eof |
+| Worktree review | `GET /api/tasks/{id}/diff` (mode otonom saja) |
+
+Dua hal yang perlu diketahui tentang kontraknya:
+
+1. **`/reply` membuat tugas BARU** yang me-resume sesi yang sama (PRD §8), bukan
+   menulis ke stdin run berjalan. Jadi `reply()` menutup stream lama dan membuka
+   stream id baru, sementara tampilan stream di layar tetap utuh.
+2. **Backend tidak punya state `waiting_for_input`.** Run berakhir (`ok`) setelah
+   agent mengirim event `question`. Frontend menahan state itu sendiri:
+   `questionPending` mencegah `eof` menutup run, dan rekonsiliasi dilewati sampai
+   user membalas.
+
+### Transisi eksplisit — perubahan di backend
+
+Sebelumnya transisi orkestrator hanya bisa dibaca dari kalimat `status.message`.
+Menebak state dari prosa Indonesia adalah cara yang rapuh, jadi
+`app/orchestrator/runner.py` sekarang menyertakan field terstruktur di samping
+pesannya (pesannya sendiri tidak berubah):
+
+| `data.transition` | Kapan | Field tambahan |
+|---|---|---|
+| `queued` | menunggu slot konkurensi | `position` |
+| `target_started` | target mulai dijalankan | `target`, `attempt`, `priority`, `plan_reused` |
+| `target_skipped` | < quality_floor · tanpa tangan · kuota mentok | `target`, `attempt`, `reason`, `reset_at` |
+| `target_failed` | 429 / gagal → lanjut target berikutnya | `target`, `attempt`, `reason` |
+| `chain_exhausted` | rantai habis atau tidak ada routing rule | `skipped`, `reset_at` |
+| `done` | output final diterima | `target` |
+| `cancelled` | dibatalkan user | — |
+
+`reset_at` (ISO) dipakai `countdownTo()` untuk countdown `HH:MM:SS` di strip
+halted — sumber angka yang sama dengan halaman Quota, sesuai janji design.
+
+`fromStatus()` **hanya** membaca `data.transition`. Status tanpa field itu masuk
+sebagai baris log biasa dan tidak pernah menggeser state — ada tesnya.
 
 ---
 
@@ -234,6 +271,19 @@ animasi panel cascade daripada salah menyimpulkan state dari string.
     dari daftar stream selama `waiting_for_input` dan kembali sebagai riwayat
     setelah dijawab. Di file design keduanya kebetulan tidak pernah tampil
     bersamaan; di app nyata keduanya hidup dari daftar event yang sama.
+14. **Quality floor memakai kosakata backend** (`frontier`/`strong`/`mid`/`light`),
+    bukan angka 5–8 seperti di file design. Angka itu tidak dikenali
+    `app/orchestrator/quality.py::_floor_tier` dan diam-diam jatuh ke
+    `TIER_UNKNOWN` — jadi terhadap daemon nyata, pilihan 5/6/7/8 semuanya berarti
+    hal yang sama. Nilai design hanya benar untuk mock.
+15. **Strip Hasil membedakan run terisolasi dan tidak.** Mode interaktif menulis
+    langsung ke working dir: badge-nya `workdir`, bukan `worktree`, statistik diff
+    tidak ditampilkan (tidak ada yang diukur), dan tombolnya hanya `tutup` —
+    `merge`/`discard`/`diff` hanya muncul untuk mode otonom, karena endpoint
+    backend-nya memang menolak tugas non-otonom dengan 400.
+16. **Output `final` tidak diulang di stream.** Adapter mengirim teks yang sama dua
+    kali: sebagai potongan `partial` lalu sekali lagi sebagai `final`. Yang `final`
+    dipakai jadi ringkasan strip Hasil saja.
 
 ## Verifikasi
 
@@ -248,6 +298,31 @@ tersaji benar di bawah base `/static/`.
 Dua cacat ditemukan lewat pemeriksaan itu dan sudah diperbaiki: baris separator
 di modal Browse ter-reset jadi border tebal default karena urutan properti CSS,
 dan pertanyaan `waiting_for_input` sempat tampil dua kali (deviasi 13).
+
+### Terhadap daemon nyata
+
+Setelah Console disambungkan ke `/api/tasks`, alur berikut dijalankan sungguhan
+terhadap backend + Postgres + harness `antigravity` yang terpasang:
+
+| Alur | Hasil |
+|---|---|
+| Kirim tugas → selesai | run #9 `✓ done` — tool_call, output, usage, dan ringkasan asli |
+| Cascade + halted | run #11: 8 target dilewati (`quality_floor: frontier`), panel cascade menceritakan kedelapannya, strip halted tenang |
+| Batalkan di tengah run | pill → `halted`, runner berhenti |
+| Build produksi lewat FastAPI | 200, tanpa request gagal, tanpa console error |
+
+Empat cacat lagi muncul dari pengujian nyata ini dan sudah diperbaiki: output
+`final` yang tampil dobel, blok output yang terpotong-potong oleh event `usage`,
+strip Hasil yang menampilkan statistik diff palsu untuk run non-otonom, dan —
+yang paling substansial — **state machine yang macet di `queued`** ketika seluruh
+target dilewati sebelum ada satu pun yang start. Kasus terakhir itu tidak pernah
+muncul di mock, hanya di orchestrator sungguhan.
+
+**Yang belum terverifikasi terhadap daemon nyata:** jalur `question` → balas /
+serahkan. Adapter yang terpasang tidak memancarkan event `question` selama sesi
+pengujian, jadi jalur itu hanya diuji lewat unit test pemetaan dan mock. Kodenya
+mengikuti kontrak `POST /api/tasks/{id}/reply`, tapi belum pernah dijalankan
+melawan agent yang benar-benar bertanya.
 
 ---
 

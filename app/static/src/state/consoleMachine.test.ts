@@ -96,6 +96,12 @@ describe("tabel transisi", () => {
     expect(transition("done", "RESUME")).toBeNull();
   });
 
+  it("rantai bisa berjalan sebelum ada target yang start", () => {
+    // quality_floor tinggi / kuota habis membuat target dilewati saat masih queued
+    expect(transition("queued", "TARGET_FAILED")).toBe("cascading");
+    expect(transition("queued", "CHAIN_EXHAUSTED")).toBe("halted");
+  });
+
   it("SUBMIT ditolak selama run masih dipegang daemon", () => {
     for (const s of ["queued", "running", "waiting_for_input", "cascading"] as ConsoleStatus[]) {
       expect(transition(s, "SUBMIT")).toBeNull();
@@ -120,6 +126,7 @@ describe("reducer — perilaku per state", () => {
         summary: "selesai",
         target: "antigravity/default",
         worktree: "choros/run-38",
+        isolated: true,
         filesChanged: 3,
         added: 64,
         removed: 18,
@@ -214,6 +221,7 @@ describe("reducer — perilaku per state", () => {
         summary: "ok",
         target: "claude/sonnet",
         worktree: "choros/run-38",
+        isolated: true,
         filesChanged: 3,
         added: 64,
         removed: 18,

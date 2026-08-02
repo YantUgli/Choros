@@ -60,8 +60,8 @@ export interface RunRequest {
   category: TaskCategory;
   mode: TaskMode;
   projectPath: string;
-  /** null = "— tanpa batas" */
-  qualityFloor: number | null;
+  /** nama tier backend (frontier/strong/mid/light) atau nama model; null = tanpa batas */
+  qualityFloor: string | null;
   /** true = menulis langsung ke working tree, tanpa worktree terisolasi. */
   noIsolation: boolean;
 }
@@ -89,7 +89,10 @@ export interface Usage {
 export interface RunResult {
   summary: string;
   target: string;
+  /** path worktree (mode otonom) atau working dir (mode interaktif) */
   worktree: string;
+  /** true = worktree terisolasi → diff / merge / discard tersedia */
+  isolated: boolean;
   filesChanged: number;
   added: number;
   removed: number;

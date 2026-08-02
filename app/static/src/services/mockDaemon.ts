@@ -160,6 +160,7 @@ function finishSteps(target: string): Step[] {
               "Refactor selesai: token dipindah ke httponly cookie, 3 file berubah, typecheck lolos.",
             target,
             worktree: `choros/run-38`,
+            isolated: true,
             filesChanged: 3,
             added: 64,
             removed: 18,

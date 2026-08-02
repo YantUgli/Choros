@@ -23,7 +23,7 @@ const NAV_TABS: TabItem<View>[] = [
 
 export default function App() {
   const [view, setView] = useState<View>("console");
-  const { state, actions, scenario, setScenario } = useConsole();
+  const { state, actions, scenario, setScenario, isMock } = useConsole();
 
   return (
     <ModalProvider>
@@ -74,6 +74,7 @@ export default function App() {
               actions={actions}
               scenario={scenario}
               setScenario={setScenario}
+              isMock={isMock}
               onOpenQuota={() => setView("quota")}
             />
           )}

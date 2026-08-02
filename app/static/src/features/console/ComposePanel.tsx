@@ -6,12 +6,17 @@ import { useModals } from "../../state/modals";
 import { CATEGORIES, PLAN_STEPS } from "../../data/fixtures";
 import type { RunRequest, TaskCategory, TaskMode } from "../../state/types";
 
+/**
+ * Nama tier persis seperti yang dimengerti `app/orchestrator/quality.py::_floor_tier`.
+ * File design memakai angka 5–8; angka itu tidak dikenali orchestrator dan diam-diam
+ * jatuh ke TIER_UNKNOWN, jadi di sini dipakai kosakata backend yang sebenarnya.
+ */
 const FLOORS: { value: string; label: string }[] = [
   { value: "", label: "— tanpa batas" },
-  { value: "5", label: "5" },
-  { value: "6", label: "6" },
-  { value: "7", label: "7" },
-  { value: "8", label: "8" },
+  { value: "frontier", label: "frontier" },
+  { value: "strong", label: "strong" },
+  { value: "mid", label: "mid" },
+  { value: "light", label: "light" },
 ];
 
 export interface ComposeProps {
@@ -40,7 +45,7 @@ export function ComposePanel({ busy, canCancel, onRun, onCancel }: ComposeProps)
       category,
       mode,
       projectPath,
-      qualityFloor: floor ? Number(floor) : null,
+      qualityFloor: floor || null,
       noIsolation,
     });
   };
