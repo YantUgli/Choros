@@ -42,17 +42,19 @@ export function toAttemptRows(logs: WireTaskLog[], agents: WireAgent[]): Attempt
     });
 }
 
+import { apiGet, API_BASE } from "./api";
+
 let cachedAgents: WireAgent[] | null = null;
 
-export async function fetchAttempts(taskId: number, base = ""): Promise<AttemptRow[]> {
+export async function fetchAttempts(taskId: number, base = API_BASE): Promise<AttemptRow[]> {
   if (!cachedAgents) {
-    const res = await fetch(`${base}/api/agents`);
-    // Kegagalan tidak di-cache: panggilan berikutnya harus mencoba lagi, kalau
-    // tidak satu kegagalan sesaat mengunci semua nama agent jadi "agent #N".
-    if (res.ok) cachedAgents = (await res.json()) as WireAgent[];
+    try {
+      cachedAgents = await apiGet<WireAgent[]>("/api/agents", base);
+    } catch {
+      // Kegagalan tidak di-cache: panggilan berikutnya harus mencoba lagi, kalau
+      // tidak satu kegagalan sesaat mengunci semua nama agent jadi "agent #N".
+    }
   }
-  const res = await fetch(`${base}/api/tasks/${taskId}/logs`);
-  if (!res.ok) throw new Error("Gagal mengambil log");
-  const logs = (await res.json()) as WireTaskLog[];
+  const logs = await apiGet<WireTaskLog[]>(`/api/tasks/${taskId}/logs`, base);
   return toAttemptRows(logs, cachedAgents ?? []);
 }
