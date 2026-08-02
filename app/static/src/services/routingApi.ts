@@ -50,7 +50,7 @@ export function toRouteChains(
 
     let quotaLabel = "—";
     if (q) {
-      quotaLabel = q.exhausted ? (q.cooldownLeft !== null ? "cooldown" : "exhausted") : "active";
+      quotaLabel = q.exhausted ? (q.cooldownEnd !== null ? "cooldown" : "exhausted") : "active";
     }
 
     chains[rule.category]!.push({

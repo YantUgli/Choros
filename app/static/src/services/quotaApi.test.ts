@@ -20,7 +20,7 @@ describe("quotaApi", () => {
       const rows = toQuotaRows(windows, agents, nowMs);
       expect(rows).toHaveLength(1);
       expect(rows[0]!.used).toBe(100);
-      expect(rows[0]!.cooldownLeft).toBe(800); // 1800 - 1000
+      expect(rows[0]!.cooldownEnd).toBe("1970-01-01T00:30:00Z");
     });
 
     it("membuang window dengan window_end di masa lalu", () => {
@@ -46,7 +46,7 @@ describe("quotaApi", () => {
       ];
       const rows = toQuotaRows(windows, agents, nowMs);
       expect(rows[0]!.exhausted).toBe(true);
-      expect(rows[0]!.cooldownLeft).toBe(800);
+      expect(rows[0]!.cooldownEnd).toBe("1970-01-01T00:30:00Z");
     });
 
     it("token.is_exhausted === true tanpa cooldown -> exhausted === true, cooldownLeft === null", () => {
@@ -55,7 +55,7 @@ describe("quotaApi", () => {
       ];
       const rows = toQuotaRows(windows, agents, nowMs);
       expect(rows[0]!.exhausted).toBe(true);
-      expect(rows[0]!.cooldownLeft).toBeNull();
+      expect(rows[0]!.cooldownEnd).toBeNull();
     });
 
     it("agent_id tak dikenal -> agent #N, tidak melempar", () => {

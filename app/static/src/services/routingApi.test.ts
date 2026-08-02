@@ -10,7 +10,7 @@ describe("routingApi", () => {
       { id: 2, name: "Agent 2", adapter_type: "b", base_url: null, default_model: null, config: {}, is_active: true },
     ];
     const quota: QuotaRow[] = [
-      { key: "1::def", agentId: 1, agent: "Agent 1", model: "def", used: 10, windowType: "daily", windowEnd: null, cooldownLeft: null, exhausted: true },
+      { key: "1::def", agentId: 1, agent: "Agent 1", model: "def", used: 10, windowType: "daily", windowEnd: null, cooldownEnd: null, exhausted: true },
     ];
 
     it("mengurutkan menaik menurut priority", () => {

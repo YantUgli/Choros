@@ -47,10 +47,17 @@ export function QuotaScreen() {
   }
 
   const { rows, consumption } = res.data;
-  const cooldowns = rows.filter((q) => q.cooldownLeft !== null);
+  const nowMs = Date.now();
+
+  const cooldowns = rows
+    .filter((q) => q.cooldownEnd !== null)
+    .map((q) => {
+      const left = Math.max(0, Math.round((Date.parse(q.cooldownEnd!) - nowMs) / 1000));
+      return { ...q, left };
+    });
 
   // Auto-reload kalau ada cooldown yang baru saja selesai
-  const needsReload = cooldowns.some((q) => q.cooldownLeft !== null && q.cooldownLeft <= 0);
+  const needsReload = cooldowns.some((q) => q.left <= 0);
   if (needsReload) {
     // Timeout untuk mencegah react warning update during render
     setTimeout(reload, 0);
@@ -111,7 +118,7 @@ export function QuotaScreen() {
                   <div key={q.key} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
                     <KeyValue
                       label={`${q.agent} / ${q.model}`}
-                      value={`reset dalam ${formatCooldown(Math.max(0, q.cooldownLeft!))}`}
+                      value={`reset dalam ${formatCooldown(q.left)}`}
                       valueColor="var(--limit)"
                       labelWidth={260}
                     />

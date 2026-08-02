@@ -29,8 +29,8 @@ export interface QuotaRow {
   used: number;
   windowType: string | null;
   windowEnd: string | null;
-  /** detik tersisa sampai cooldown lepas; null = tidak sedang cooldown */
-  cooldownLeft: number | null;
+  /** waktu selesai cooldown dalam string ISO; null = tidak sedang cooldown */
+  cooldownEnd: string | null;
   exhausted: boolean;
 }
 
@@ -68,10 +68,8 @@ export function toQuotaRows(
       const agentId = cooldown?.agent_id ?? token?.agent_id ?? 0;
       const agent = agentMap.get(agentId);
       const model = cooldown?.model ?? token?.model ?? null;
-      const cooldownLeft =
-        cooldown && cooldown.window_end
-          ? Math.max(0, Math.round((Date.parse(cooldown.window_end) - nowMs) / 1000))
-          : null;
+      const cooldownEnd = cooldown && cooldown.window_end ? cooldown.window_end : null;
+      const exhausted = cooldownEnd !== null || (token?.is_exhausted ?? false);
       return {
         key,
         agentId,
@@ -80,8 +78,8 @@ export function toQuotaRows(
         used: token?.tokens_used ?? 0,
         windowType: token?.window_type ?? null,
         windowEnd: token?.window_end ?? null,
-        cooldownLeft,
-        exhausted: cooldownLeft !== null || (token?.is_exhausted ?? false),
+        cooldownEnd,
+        exhausted,
       };
     })
     .sort((a, b) => a.agent.localeCompare(b.agent) || (a.model ?? "").localeCompare(b.model ?? ""));

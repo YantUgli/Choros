@@ -43,9 +43,9 @@ export function TranscriptView({ taskId }: { taskId: number }) {
           const cascadeAttempts: CascadeAttempt[] = res.attempts.map((a) => ({
             index: a.index,
             target: a.model ? `${a.agent}/${a.model}` : a.agent,
-            outcome: a.status === "skipped" ? "skipped" : "failed",
+            outcome: a.status === "ok" ? "ok" : a.status === "skipped" ? "skipped" : "failed",
             reason: a.status,
-            note: a.status === "skipped" ? "dilewati" : "jatuh ke target berikut"
+            note: a.status === "ok" ? "berhasil" : a.status === "skipped" ? "dilewati" : "jatuh ke target berikut"
           }));
 
           setData({
