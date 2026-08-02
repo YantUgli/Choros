@@ -1,12 +1,14 @@
-import { Badge, KeyValue, MeterBar, Panel } from "../../components/ds";
+import { useEffect, useState } from "react";
+import { Badge, Button, KeyValue, Panel } from "../../components/ds";
 import { Label } from "../../components/Label";
-import { CONSUMPTION_7D, QUOTA_WINDOWS } from "../../data/fixtures";
+import { fetchQuota, formatCooldown, resetQuota } from "../../services/quotaApi";
+import { useApiResource } from "../../state/useApiResource";
 
 const fmt = (n: number) => n.toLocaleString("en-US");
 
 const windowGrid = {
   display: "grid",
-  gridTemplateColumns: "260px 1fr 170px 190px",
+  gridTemplateColumns: "260px 1fr 190px",
   gap: "var(--space-3)",
   alignItems: "center",
   padding: "var(--space-2) 0",
@@ -23,7 +25,36 @@ const tableGrid = {
 } as const;
 
 export function QuotaScreen() {
-  const cooldowns = QUOTA_WINDOWS.filter((q) => q.cooldown);
+  const [res, reload] = useApiResource(fetchQuota);
+  const [, tick] = useState(0);
+
+  useEffect(() => {
+    const id = setInterval(() => tick((n) => n + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  if (res.phase === "loading") {
+    return <div style={{ padding: "var(--space-4)" }}>Memuat...</div>;
+  }
+  if (res.phase === "error") {
+    return (
+      <div style={{ padding: "var(--space-4)", color: "var(--limit)" }}>
+        {res.status === 401 ? "belum login" : `daemon tidak menjawab: ${res.message}`}
+        <br />
+        <Button onClick={reload} style={{ marginTop: 10 }}>Coba lagi</Button>
+      </div>
+    );
+  }
+
+  const { rows, consumption } = res.data;
+  const cooldowns = rows.filter((q) => q.cooldownLeft !== null);
+
+  // Auto-reload kalau ada cooldown yang baru saja selesai
+  const needsReload = cooldowns.some((q) => q.cooldownLeft !== null && q.cooldownLeft <= 0);
+  if (needsReload) {
+    // Timeout untuk mencegah react warning update during render
+    setTimeout(reload, 0);
+  }
 
   return (
     <div className="ov" style={{ flex: 1, minWidth: 0, padding: "var(--space-4)", overflow: "auto" }}>
@@ -33,20 +64,38 @@ export function QuotaScreen() {
             <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
               <Label style={{ marginBottom: 6 }}>Window aktif — per (agent, model)</Label>
 
-              {QUOTA_WINDOWS.map((q) => (
-                <div key={q.key} style={windowGrid}>
-                  <span>
-                    {q.agent} / {q.model}
-                  </span>
-                  <MeterBar value={q.used} max={q.max} showValue={false} height={8} />
-                  <span style={{ textAlign: "right", color: "var(--muted)" }}>
-                    {fmt(q.used)} / {fmt(q.max)} tok
-                  </span>
-                  <div style={{ justifySelf: "end" }}>
-                    <Badge tone={q.badge.tone}>{q.badge.text}</Badge>
-                  </div>
+              {rows.length === 0 ? (
+                <div style={{ fontSize: "var(--fs-13)", color: "var(--muted)", fontStyle: "italic", padding: "10px 0" }}>
+                  belum ada konsumsi tercatat
                 </div>
-              ))}
+              ) : (
+                rows.map((q) => {
+                  let windowText = "—";
+                  if (q.windowType && q.windowEnd) {
+                    const date = new Date(q.windowEnd);
+                    windowText = `${q.windowType} · berakhir ${date.getHours().toString().padStart(2, "0")}:${date.getMinutes().toString().padStart(2, "0")}`;
+                  }
+                  
+                  return (
+                    <div key={q.key} style={windowGrid}>
+                      <span>
+                        {q.agent} / {q.model}
+                      </span>
+                      <span style={{ color: "var(--muted)" }}>
+                        {windowText}
+                      </span>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <span style={{ color: "var(--muted)" }}>
+                          {fmt(q.used)} tok
+                        </span>
+                        <Badge tone={q.exhausted ? "limit" : "neutral"}>
+                          {q.exhausted ? "exhausted" : "active"}
+                        </Badge>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
 
               <div
                 style={{
@@ -59,13 +108,23 @@ export function QuotaScreen() {
               >
                 <Label style={{ marginBottom: "var(--space-1)" }}>Cooldown aktif</Label>
                 {cooldowns.map((q) => (
-                  <KeyValue
-                    key={q.key}
-                    label={`${q.agent} / ${q.model}`}
-                    value={`reset dalam ${q.cooldown}`}
-                    valueColor="var(--limit)"
-                    labelWidth={260}
-                  />
+                  <div key={q.key} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+                    <KeyValue
+                      label={`${q.agent} / ${q.model}`}
+                      value={`reset dalam ${formatCooldown(Math.max(0, q.cooldownLeft!))}`}
+                      valueColor="var(--limit)"
+                      labelWidth={260}
+                    />
+                    <Button
+                      onClick={async () => {
+                        await resetQuota(q.agentId, q.model);
+                        reload();
+                      }}
+                      title="saya yakin kuotanya sudah pulih"
+                    >
+                      Reset
+                    </Button>
+                  </div>
                 ))}
                 {cooldowns.length === 0 && (
                   <KeyValue label="—" value="tidak ada target dalam cooldown" valueColor="var(--ok)" labelWidth={260} />
@@ -90,7 +149,7 @@ export function QuotaScreen() {
                 <span style={{ textAlign: "right" }}>token</span>
                 <span style={{ textAlign: "right" }}>kena limit</span>
               </div>
-              {CONSUMPTION_7D.map((r) => (
+              {consumption.map((r) => (
                 <div key={r.target} style={{ ...tableGrid, fontSize: "var(--fs-13)", padding: "7px 0" }}>
                   <span>{r.target}</span>
                   <span style={{ textAlign: "right" }}>{r.runs}</span>
@@ -103,8 +162,9 @@ export function QuotaScreen() {
             </div>
 
             <span style={{ fontSize: "var(--fs-12)", color: "var(--muted)", lineHeight: 1.5 }}>
-              baris exhausted memberi countdown yang sama dengan pesan halted di Console — satu sumber
-              kebenaran.
+              baris exhausted memberi countdown yang sama dengan pesan halted di Console — satu sumber kebenaran.
+              <br />
+              tidak ada angka 'sisa kuota': langganan tidak mengekspornya, jadi yang ditampilkan hanya yang benar-benar tercatat choros.
             </span>
           </div>
         </Panel>
