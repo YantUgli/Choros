@@ -56,7 +56,8 @@ class Target:
 
     @property
     def label(self) -> str:
-        return f"{self.agent.name}/{self.model or self.agent.default_model or 'default'}"
+        model = self.model or self.agent.default_model
+        return f"{self.agent.name}/{model}" if model else self.agent.name
 
 
 async def resolve_targets(
