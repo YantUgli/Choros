@@ -6,21 +6,24 @@ const COLS = { idx: 12, agent: 140, model: 140, status: 100 };
 
 export function AttemptsPanel({
   taskId,
+  initialRows,
   onEmpty,
 }: {
   taskId: number;
-  onEmpty: () => void;
+  initialRows?: AttemptRow[];
+  onEmpty?: () => void;
 }) {
-  const [rows, setRows] = useState<AttemptRow[]>([]);
+  const [rows, setRows] = useState<AttemptRow[]>(initialRows || []);
 
   useEffect(() => {
+    if (initialRows) return;
     fetchAttempts(taskId)
       .then((r) => {
         setRows(r);
-        if (r.length === 0) onEmpty();
+        if (r.length === 0) onEmpty?.();
       })
-      .catch(onEmpty);
-  }, [taskId, onEmpty]);
+      .catch(() => onEmpty?.());
+  }, [taskId, initialRows, onEmpty]);
 
   if (rows.length === 0) return null;
 

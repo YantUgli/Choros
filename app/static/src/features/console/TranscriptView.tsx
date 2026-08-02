@@ -10,10 +10,21 @@ function processEvents(events: ConsoleEvent[]): StreamEvent[] {
   const stream: StreamEvent[] = [];
   
   for (const ev of events) {
-    if (ev.type === "LOG" || ev.type === "QUESTION") {
-      stream.push(ev.event);
-    }
-    if (ev.type === "LOG_DELTA") {
+    if (
+      ev.type === "LOG" || 
+      ev.type === "QUESTION" || 
+      ev.type === "USAGE" || 
+      ev.type === "TARGET_FAILED" || 
+      ev.type === "TARGET_SELECTED" || 
+      ev.type === "CHAIN_EXHAUSTED" || 
+      ev.type === "FATAL"
+    ) {
+      if ("event" in ev) {
+        stream.push(ev.event);
+      }
+    } else if (ev.type === "FINAL") {
+      stream.push(...ev.events);
+    } else if (ev.type === "LOG_DELTA") {
        stream.push({
            id: ev.streamId,
            ts: ev.ts,
@@ -30,7 +41,7 @@ function processEvents(events: ConsoleEvent[]): StreamEvent[] {
 export function TranscriptView({ taskId }: { taskId: number }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [data, setData] = useState<{ stream: StreamEvent[]; attempts: CascadeAttempt[] } | null>(null);
+  const [data, setData] = useState<{ stream: StreamEvent[]; attempts: CascadeAttempt[]; attemptsData: any[] } | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -50,7 +61,8 @@ export function TranscriptView({ taskId }: { taskId: number }) {
 
           setData({
              stream: processEvents(res.events),
-             attempts: cascadeAttempts
+             attempts: cascadeAttempts,
+             attemptsData: res.attempts
           });
           setLoading(false);
         }
@@ -98,6 +110,7 @@ export function TranscriptView({ taskId }: { taskId: number }) {
     planReused: false,
   };
 
+  const showAttempts = data.attemptsData.length > 0;
   const showCascade = data.attempts.some((a) => a.outcome === "failed" || a.outcome === "skipped");
 
   return (
@@ -110,8 +123,8 @@ export function TranscriptView({ taskId }: { taskId: number }) {
         onJumpLatest={() => {}}
       />
       
-      <AttemptsPanel taskId={taskId} onEmpty={() => {}} />
-      {showCascade && (
+      {showAttempts && <AttemptsPanel taskId={taskId} initialRows={data.attemptsData} />}
+      {showCascade && !showAttempts && (
         <CascadePanel runId={taskId} attempts={data.attempts} status="done" />
       )}
     </>

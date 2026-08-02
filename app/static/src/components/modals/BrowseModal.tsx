@@ -3,6 +3,7 @@ import { Button } from "../ds";
 import { FolderIcon } from "../Icons";
 import { Label } from "../Label";
 import { Modal } from "../Modal";
+// data contoh
 const FS: Record<string, string[]> = {
   "C:\\": ["project", "Users", "Windows", "temp"],
   "C:\\project": ["src", "Assets", "api", "infra", "web"],

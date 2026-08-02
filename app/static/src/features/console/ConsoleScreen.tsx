@@ -18,6 +18,7 @@ import { HistoryList } from "./HistoryList";
 import { ErrorStrip, HaltedStrip, ResultStrip } from "./ResultStrips";
 import { StreamView } from "./StreamView";
 import { TranscriptView } from "./TranscriptView";
+import { mergeDiff, discardDiff } from "../../services/taskApi";
 
 /** pill state: [tone Badge, label, status StatusDot] — satu sumber untuk seluruh Console. */
 const PILLS: Record<ConsoleStatus, [BadgeTone, string, DotStatus]> = {
@@ -242,23 +243,34 @@ export function ConsoleScreen({
                   result={state.result}
                   onDiff={() => modals.openDiff(state.runId, actions.reset)}
                   onMerge={async () => {
-                    const { mergeDiff } = await import("../../services/taskApi");
                     try {
                       await mergeDiff(state.runId);
                       actions.reset();
                     } catch (err) {
-                      alert(`Gagal merge: ${String(err)}`);
+                      modals.openConfirm({
+                        title: "Error",
+                        body: `Gagal merge: ${String(err)}`,
+                        onConfirm: () => {}
+                      });
                     }
                   }}
                   onDiscard={async () => {
-                    if (!window.confirm("Buang semua perubahan di worktree ini?")) return;
-                    const { discardDiff } = await import("../../services/taskApi");
-                    try {
-                      await discardDiff(state.runId);
-                      actions.reset();
-                    } catch (err) {
-                      alert(`Gagal discard: ${String(err)}`);
-                    }
+                    modals.openConfirm({
+                      title: "Buang perubahan",
+                      body: "Buang semua perubahan di worktree ini?",
+                      onConfirm: async () => {
+                        try {
+                          await discardDiff(state.runId);
+                          actions.reset();
+                        } catch (err) {
+                          modals.openConfirm({
+                            title: "Error",
+                            body: `Gagal discard: ${String(err)}`,
+                            onConfirm: () => {}
+                          });
+                        }
+                      }
+                    });
                   }}
                 />
                 <FollowUpStrip onSend={actions.followUp} />

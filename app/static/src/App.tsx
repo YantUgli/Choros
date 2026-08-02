@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { apiGet } from "./services/api";
 import { ChorosWordmark, StatusDot, Tabs, type TabItem } from "./components/ds";
 import { Meta } from "./components/Label";
 import { ConsoleScreen } from "./features/console/ConsoleScreen";
@@ -29,7 +30,6 @@ function HealthIndicator() {
     let active = true;
     const check = async () => {
       try {
-        const { apiGet } = await import("./services/api");
         await apiGet("/healthz");
         if (active) {
           setStatus("ok");

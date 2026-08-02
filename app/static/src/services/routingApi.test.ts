@@ -47,6 +47,18 @@ describe("routingApi", () => {
       expect(chains["c1"]![1]!.quotaExhausted).toBe(false);
     });
 
+    it("rule dengan model: null (warisan) tetap menemukan window kuota agent default — kunci regresi qKey", () => {
+      const rules: WireRoutingRule[] = [
+        { id: 1, category: "c1", agent_id: 1, model: null, priority: 1 },
+      ];
+      const chains = toRouteChains(rules, agents, quota);
+      // agent 1 default_model "def" -> window kuota tersimpan sebagai "1::def"
+      // (lihat fixture `quota` di atas). Kalau qKey memakai rule.model mentah
+      // ("1::"), assertion ini gagal dengan quotaLabel "—".
+      expect(chains["c1"]![0]!.quotaLabel).toBe("limit");
+      expect(chains["c1"]![0]!.quotaExhausted).toBe(true);
+    });
+
     it("mengabaikan agent yatim tanpa menghilangkan rule lain", () => {
       const rules: WireRoutingRule[] = [
         { id: 1, category: "c1", agent_id: 99, model: null, priority: 1 },

@@ -13,7 +13,7 @@ import {
   RouteTarget,
   updateRoutingRule,
 } from "../../services/routingApi";
-import { fetchAgents } from "../../services/agentApi";
+import { fetchAgents, type WireAgentFull } from "../../services/agentApi";
 
 function move<T>(list: T[], from: number, to: number): T[] {
   if (to < 0 || to >= list.length || from === to) return list;
@@ -28,10 +28,9 @@ export function RoutingScreen() {
   const modals = useModals();
   const [res, reloadData] = useApiResource(fetchRoutingData);
   const [catsRes] = useApiResource(fetchCategories);
-  
   const [optimisticChains, setOptimisticChains] = useState<Record<string, RouteTarget[]> | null>(null);
-  
   const [cat, setCat] = useState<string>("coding_complex");
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const dragFrom = useRef<number | null>(null);
   const [dragOver, setDragOver] = useState<number | null>(null);
 
@@ -42,9 +41,9 @@ export function RoutingScreen() {
     }
   }, [res]);
 
-  if (res.phase === "loading" || !optimisticChains) {
-    return <div style={{ padding: "var(--space-4)" }}>Memuat...</div>;
-  }
+  // Urutan penting: saat res.phase === "error", efek di atas tidak pernah
+  // mengisi optimisticChains, jadi syarat "loading" di bawah akan menelan
+  // status error kalau diperiksa lebih dulu.
   if (res.phase === "error") {
     return (
       <div style={{ padding: "var(--space-4)", color: "var(--limit)" }}>
@@ -53,6 +52,9 @@ export function RoutingScreen() {
         <Button onClick={reloadData} style={{ marginTop: 10 }}>Coba lagi</Button>
       </div>
     );
+  }
+  if (res.phase === "loading" || !optimisticChains) {
+    return <div style={{ padding: "var(--space-4)" }}>Memuat...</div>;
   }
 
   const categories = catsRes.phase === "ready" ? catsRes.data : [];
@@ -70,71 +72,112 @@ export function RoutingScreen() {
     const next = move(targets, from, to);
     setTargets(next);
     
-    // Kirim pembaruan prioritas per baris ke server
-    for (let i = 0; i < next.length; i++) {
-      const t = next[i]!;
-      await updateRoutingRule(t.id, {
-        category: cat,
-        agent_id: t.agentId,
-        model: t.model,
-        priority: i + 1,
-      });
+    setErrorMsg(null);
+    try {
+      // Kirim pembaruan prioritas per baris ke server
+      for (let i = 0; i < next.length; i++) {
+        const t = next[i]!;
+        await updateRoutingRule(t.id, {
+          category: cat,
+          agent_id: t.agentId,
+          model: t.originalModel,
+          priority: i + 1,
+        });
+      }
+      reloadData();
+    } catch (e: any) {
+      setErrorMsg(e.message || String(e));
+      reloadData(); // rollback UI
     }
-    reloadData();
   };
 
   const editTarget = async (t: RouteTarget, index: number) => {
-    const agents = await fetchAgents();
+    let agents: WireAgentFull[];
+    try {
+      agents = await fetchAgents();
+    } catch (e: any) {
+      setErrorMsg(e.message || String(e));
+      return;
+    }
     modals.openAgent(
       {
         title: `Ubah target ${index + 1}`,
         name: t.agent,
         adapter: t.adapter,
-        model: t.model,
+        // Kosong berarti "ikut default agent". Mengisi t.model (teresolusi)
+        // di sini akan memaku model warisan ke DB begitu draft disimpan.
+        model: t.originalModel,
         active: true,
       },
       async (draft) => {
-        // Cari agent_id dari agent list by name
-        let agentId = t.agentId;
-        const matchingAgent = agents.find(a => a.name === draft.name);
-        if (matchingAgent) {
-          agentId = matchingAgent.id;
-        }
+        setErrorMsg(null);
+        try {
+          let agentId = t.agentId;
+          const matchingAgent = agents.find(a => a.name === draft.name);
+          if (matchingAgent) {
+            agentId = matchingAgent.id;
+          }
 
-        await updateRoutingRule(t.id, {
-          category: cat,
-          agent_id: agentId,
-          model: draft.model || null,
-          priority: index + 1,
-        });
-        reloadData();
+          await updateRoutingRule(t.id, {
+            category: cat,
+            agent_id: agentId,
+            model: draft.model || null,
+            priority: index + 1,
+          });
+          reloadData();
+        } catch (e: any) {
+          setErrorMsg(e.message || String(e));
+        }
       },
     );
   };
 
   const addTarget = async () => {
-    const agents = await fetchAgents();
+    let agents: WireAgentFull[];
+    try {
+      agents = await fetchAgents();
+    } catch (e: any) {
+      setErrorMsg(e.message || String(e));
+      return;
+    }
     modals.openAgent({ title: `Tambah target — ${cat}` }, async (draft) => {
-      let agentId = 0;
-      const matchingAgent = agents.find(a => a.name === draft.name);
-      if (matchingAgent) {
-        agentId = matchingAgent.id;
+      setErrorMsg(null);
+      try {
+        let agentId = 0;
+        const matchingAgent = agents.find(a => a.name === draft.name);
+        if (matchingAgent) {
+          agentId = matchingAgent.id;
+        } else {
+          throw new Error("Agent tidak ditemukan");
+        }
+        
+        await createRoutingRule({
+          category: cat,
+          agent_id: agentId,
+          model: draft.model || null,
+          priority: targets.length + 1,
+        });
+        reloadData();
+      } catch (e: any) {
+        setErrorMsg(e.message || String(e));
       }
-      
-      await createRoutingRule({
-        category: cat,
-        agent_id: agentId,
-        model: draft.model || null,
-        priority: targets.length + 1,
-      });
-      reloadData();
     });
   };
 
   const removeTarget = async (id: number) => {
-    if (!window.confirm("Hapus target routing ini?")) return;
-    await deleteRoutingRule(id);
-    reloadData();
+    modals.openConfirm({
+      title: "Hapus target",
+      body: "Hapus target routing ini?",
+      onConfirm: async () => {
+        setErrorMsg(null);
+        try {
+          await deleteRoutingRule(id);
+          reloadData();
+        } catch (e: any) {
+          setErrorMsg(e.message || String(e));
+        }
+      }
+    });
   };
 
   return (
@@ -182,6 +225,7 @@ export function RoutingScreen() {
           style={{ maxWidth: 900 }}
         >
           <div style={{ display: "flex", flexDirection: "column" }}>
+            {errorMsg && <div style={{ color: "var(--limit)", fontSize: "var(--fs-13)", marginBottom: "var(--space-2)" }}>{errorMsg}</div>}
             {targets.map((t, i) => (
               <div key={t.id}>
                 <Card

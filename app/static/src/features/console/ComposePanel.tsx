@@ -7,6 +7,7 @@ import { useApiResource } from "../../state/useApiResource";
 import { fetchCategories } from "../../services/routingApi";
 import type { RunRequest, TaskCategory, TaskMode } from "../../state/types";
 
+// data contoh
 const PLAN_STEPS = [
   "1. baca modul auth",
   "2. petakan pemakaian token",
@@ -45,7 +46,7 @@ export function ComposePanel({ busy, canCancel, onRun, onCancel }: ComposeProps)
   const [planOpen, setPlanOpen] = useState(false);
   
   const [catsRes] = useApiResource(fetchCategories);
-  const categories = catsRes.phase === "ready" ? catsRes.data : [];
+  const categories = catsRes.phase === "ready" ? catsRes.data : catsRes.phase === "error" ? [{ value: category, label: "gagal memuat" }] : [{ value: category, label: "memuat..." }];
 
   const runDisabled = busy || prompt.trim().length === 0;
 

@@ -29,9 +29,22 @@ export function QuotaScreen() {
   const [, tick] = useState(0);
 
   useEffect(() => {
-    const id = setInterval(() => tick((n) => n + 1), 1000);
+    const id = setInterval(() => {
+      tick((n) => n + 1);
+      // Satu cooldown baru saja habis -> minta data segar. Memutuskan ini di
+      // badan render (versi lama) adalah efek samping saat render, dan
+      // terpanggil dua kali di React StrictMode.
+      if (
+        res.phase === "ready" &&
+        res.data.rows.some(
+          (q) => q.cooldownEnd !== null && Date.parse(q.cooldownEnd) <= Date.now(),
+        )
+      ) {
+        reload();
+      }
+    }, 1000);
     return () => clearInterval(id);
-  }, []);
+  }, [res, reload]);
 
   if (res.phase === "loading") {
     return <div style={{ padding: "var(--space-4)" }}>Memuat...</div>;
@@ -55,13 +68,6 @@ export function QuotaScreen() {
       const left = Math.max(0, Math.round((Date.parse(q.cooldownEnd!) - nowMs) / 1000));
       return { ...q, left };
     });
-
-  // Auto-reload kalau ada cooldown yang baru saja selesai
-  const needsReload = cooldowns.some((q) => q.left <= 0);
-  if (needsReload) {
-    // Timeout untuk mencegah react warning update during render
-    setTimeout(reload, 0);
-  }
 
   return (
     <div className="ov" style={{ flex: 1, minWidth: 0, padding: "var(--space-4)", overflow: "auto" }}>
@@ -96,7 +102,7 @@ export function QuotaScreen() {
                           {fmt(q.used)} tok
                         </span>
                         <Badge tone={q.exhausted ? "limit" : "neutral"}>
-                          {q.exhausted ? "exhausted" : "active"}
+                          {q.exhausted ? "limit" : "tersedia"}
                         </Badge>
                       </div>
                     </div>

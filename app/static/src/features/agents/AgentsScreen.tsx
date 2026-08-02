@@ -81,14 +81,19 @@ export function AgentsScreen() {
     );
 
   const remove = async (id: number) => {
-    if (!window.confirm("Yakin ingin menghapus agent ini?")) return;
-    setErrorMsg(null);
-    try {
-      await deleteAgent(id);
-      reload();
-    } catch (e: any) {
-      setErrorMsg(`Gagal menghapus: ${e.message || String(e)}`);
-    }
+    modals.openConfirm({
+      title: "Hapus agent",
+      body: "Yakin ingin menghapus agent ini?",
+      onConfirm: async () => {
+        setErrorMsg(null);
+        try {
+          await deleteAgent(id);
+          reload();
+        } catch (e: any) {
+          setErrorMsg(`Gagal menghapus: ${e.message || String(e)}`);
+        }
+      }
+    });
   };
 
   return (

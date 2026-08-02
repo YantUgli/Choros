@@ -16,6 +16,7 @@ export interface RouteTarget {
   agent: string;
   adapter: string;
   model: string | null;
+  originalModel: string | null;
   /** label gabungan, mencerminkan Target.label di app/orchestrator/router.py */
   label: string;
   quotaExhausted: boolean;
@@ -45,12 +46,17 @@ export function toRouteChains(
 
     const model = rule.model ?? agent.default_model;
     const label = model ? `${agent.name}/${model}` : agent.name;
+    // Window kuota selalu tersimpan dengan model TERESOLUSI:
+    // router.py:85 -> Target.model = rule.model or agent.default_model, lalu
+    // runner.py:408/599/617 meneruskan target.model ke seluruh fungsi quota.*.
+    // Memakai rule.model mentah di sini membuat rule yang mewarisi model
+    // (model: null) tidak pernah menemukan window kuotanya sendiri.
     const qKey = `${agent.id}::${model ?? ""}`;
     const q = quotaMap.get(qKey);
 
     let quotaLabel = "—";
     if (q) {
-      quotaLabel = q.exhausted ? (q.cooldownEnd !== null ? "cooldown" : "exhausted") : "active";
+      quotaLabel = q.exhausted ? (q.cooldownEnd !== null ? "cooldown" : "limit") : "tersedia";
     }
 
     chains[rule.category]!.push({
@@ -59,8 +65,9 @@ export function toRouteChains(
       agent: agent.name,
       adapter: agent.adapter_type,
       model,
+      originalModel: rule.model,
       label,
-      quotaExhausted: q?.exhausted ?? false,
+      quotaExhausted: quotaLabel === "limit" || quotaLabel === "cooldown",
       quotaLabel,
     });
   }

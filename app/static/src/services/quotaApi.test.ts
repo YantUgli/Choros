@@ -1,10 +1,21 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { formatCooldown, toConsumptionRows, toQuotaRows, type WireQuotaWindow } from "./quotaApi";
+import { formatCooldown, toConsumptionRows, toQuotaRows, fetchQuota, type WireQuotaWindow } from "./quotaApi";
 import type { WireAgent } from "./taskApi";
 
 describe("quotaApi", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  describe("fetchQuota", () => {
+    it("melempar error 401 saat belum login", async () => {
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        text: () => Promise.resolve("Unauthorized")
+      }));
+      await expect(fetchQuota()).rejects.toThrow("401");
+    });
   });
 
   describe("toQuotaRows", () => {
@@ -49,7 +60,7 @@ describe("quotaApi", () => {
       expect(rows[0]!.cooldownEnd).toBe("1970-01-01T00:30:00Z");
     });
 
-    it("token.is_exhausted === true tanpa cooldown -> exhausted === true, cooldownLeft === null", () => {
+    it("token.is_exhausted === true tanpa cooldown -> exhausted === true, cooldownEnd === null", () => {
       const windows: WireQuotaWindow[] = [
         { id: 1, agent_id: 1, model: "m", window_type: "daily", window_start: null, window_end: "1970-01-01T00:30:00Z", tokens_used: 100, is_exhausted: true },
       ];

@@ -6,16 +6,19 @@ import {
 } from "../components/modals/AgentEditorModal";
 import { BrowseModal } from "../components/modals/BrowseModal";
 import { DiffModal } from "../components/modals/DiffModal";
+import { ConfirmModal } from "../components/modals/ConfirmModal";
 
 type ModalRequest =
   | { type: "agent"; preset: AgentPreset; onSave: (draft: AgentDraft) => void }
   | { type: "diff"; runId: number; onMerge: () => void }
-  | { type: "browse"; initial: string; onPick: (path: string) => void };
+  | { type: "browse"; initial: string; onPick: (path: string) => void }
+  | { type: "confirm"; title: string; body: string; onConfirm: () => void };
 
 interface ModalApi {
   openAgent: (preset: AgentPreset, onSave: (draft: AgentDraft) => void) => void;
   openDiff: (runId: number, onMerge: () => void) => void;
   openBrowse: (initial: string, onPick: (path: string) => void) => void;
+  openConfirm: (opts: { title: string; body: string; onConfirm: () => void }) => void;
   close: () => void;
 }
 
@@ -36,6 +39,7 @@ export function ModalProvider({ children }: { children: ReactNode }) {
       openAgent: (preset, onSave) => setModal({ type: "agent", preset, onSave }),
       openDiff: (runId, onMerge) => setModal({ type: "diff", runId, onMerge }),
       openBrowse: (initial, onPick) => setModal({ type: "browse", initial, onPick }),
+      openConfirm: (opts) => setModal({ type: "confirm", ...opts }),
       close,
     }),
     [close],
@@ -69,6 +73,17 @@ export function ModalProvider({ children }: { children: ReactNode }) {
           initial={modal.initial}
           onPick={(p) => {
             modal.onPick(p);
+            close();
+          }}
+          onClose={close}
+        />
+      )}
+      {modal?.type === "confirm" && (
+        <ConfirmModal
+          title={modal.title}
+          body={modal.body}
+          onConfirm={() => {
+            modal.onConfirm();
             close();
           }}
           onClose={close}
