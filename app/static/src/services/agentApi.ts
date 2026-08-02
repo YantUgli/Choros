@@ -55,5 +55,5 @@ export async function deleteAgent(id: number): Promise<void> {
 }
 
 export async function fetchAdapters(): Promise<WireAdapterInfo[]> {
-  return apiGet<WireAdapterInfo[]>("/api/agents/adapters");
+  return apiGet<WireAdapterInfo[]>("/api/adapters");
 }

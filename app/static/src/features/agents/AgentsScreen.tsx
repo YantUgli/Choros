@@ -30,7 +30,8 @@ export function AgentsScreen() {
 
   const agents = toAgentRows(res.data);
 
-  const edit = (id: number, name: string, adapter: string, model: string, active: boolean) =>
+  const edit = (id: number, name: string, adapter: string, model: string, active: boolean) => {
+    const existing = res.phase === "ready" ? res.data.find(x => x.id === id) : null;
     modals.openAgent(
       {
         title: `Ubah agent — ${name}`,
@@ -46,8 +47,8 @@ export function AgentsScreen() {
             name: draft.name || "agent",
             adapter_type: draft.adapter,
             default_model: draft.model || null,
-            base_url: null, // UI saat ini tidak punya input ini
-            config: {},
+            base_url: existing?.base_url ?? null,
+            config: existing?.config ?? {},
             is_active: draft.active,
           });
           reload();
@@ -56,6 +57,7 @@ export function AgentsScreen() {
         }
       },
     );
+  };
 
   const create = () =>
     modals.openAgent(
