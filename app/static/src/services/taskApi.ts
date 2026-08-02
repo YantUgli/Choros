@@ -70,3 +70,25 @@ export async function mergeDiff(taskId: number): Promise<void> {
 export async function discardDiff(taskId: number): Promise<void> {
   await apiSend("POST", `/api/tasks/${taskId}/discard`);
 }
+
+export interface DiffLine {
+  text: string;
+  tone: "muted" | "add" | "del";
+}
+
+export function toDiffLines(raw: string): DiffLine[] {
+  if (!raw.trim()) return [{ text: "Tidak ada perubahan", tone: "muted" }];
+  
+  return raw.split("\n").map(l => {
+    if (l.startsWith("+++") || l.startsWith("---")) {
+      return { text: l, tone: "muted" };
+    }
+    if (l.startsWith("+")) {
+      return { text: l, tone: "add" };
+    }
+    if (l.startsWith("-")) {
+      return { text: l, tone: "del" };
+    }
+    return { text: l, tone: "muted" };
+  });
+}

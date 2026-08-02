@@ -85,3 +85,40 @@ describe("toAttemptRows", () => {
     vi.unstubAllGlobals();
   });
 });
+
+import { toDiffLines } from "./taskApi";
+
+describe("toDiffLines", () => {
+  it("+++/--- jadi muted", () => {
+    const diff = "+++ b/src/auth.ts\n--- a/src/auth.ts";
+    const lines = toDiffLines(diff);
+    expect(lines).toEqual([
+      { tone: "muted", text: "+++ b/src/auth.ts" },
+      { tone: "muted", text: "--- a/src/auth.ts" }
+    ]);
+  });
+
+  it("+/- jadi add/del", () => {
+    const diff = "+ new line\n- old line";
+    const lines = toDiffLines(diff);
+    expect(lines).toEqual([
+      { tone: "add", text: "+ new line" },
+      { tone: "del", text: "- old line" }
+    ]);
+  });
+
+  it("baris biasa jadi muted", () => {
+    const diff = "  unchanged line";
+    const lines = toDiffLines(diff);
+    expect(lines).toEqual([
+      { tone: "muted", text: "  unchanged line" }
+    ]);
+  });
+
+  it("string kosong -> array dengan 1 baris 'Tidak ada perubahan'", () => {
+    const lines = toDiffLines("   \n   ");
+    expect(lines).toEqual([
+      { tone: "muted", text: "Tidak ada perubahan" }
+    ]);
+  });
+});

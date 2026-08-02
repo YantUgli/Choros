@@ -1,29 +1,13 @@
 import { useEffect, useState } from "react";
 import { Button } from "../ds";
 import { Modal } from "../Modal";
-import { fetchDiff, mergeDiff, discardDiff } from "../../services/taskApi";
+import { fetchDiff, mergeDiff, discardDiff, toDiffLines } from "../../services/taskApi";
 
 const toneColor = {
   muted: "var(--muted)",
   add: "var(--ok)",
   del: "var(--error)",
 } as const;
-
-type DiffLine = { text: string; tone: "muted" | "add" | "del" };
-
-function parseDiff(raw: string): DiffLine[] {
-  if (!raw.trim()) return [{ text: "Tidak ada perubahan", tone: "muted" }];
-  
-  return raw.split("\n").map(l => {
-    if (l.startsWith("+") && !l.startsWith("+++")) {
-      return { text: l, tone: "add" };
-    }
-    if (l.startsWith("-") && !l.startsWith("---")) {
-      return { text: l, tone: "del" };
-    }
-    return { text: l, tone: "muted" };
-  });
-}
 
 export function DiffModal({
   runId,
@@ -79,7 +63,7 @@ export function DiffModal({
     }
   };
 
-  const lines = parseDiff(diffText);
+  const lines = toDiffLines(diffText);
 
   return (
     <Modal title={`diff — run #${runId}`} width={640} onClose={onClose}>

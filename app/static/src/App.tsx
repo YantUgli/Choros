@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { ChorosWordmark, StatusDot, Tabs, type TabItem } from "./components/ds";
 import { Meta } from "./components/Label";
 import { ConsoleScreen } from "./features/console/ConsoleScreen";
@@ -20,6 +20,43 @@ const NAV_TABS: TabItem<View>[] = [
   { value: "workflows", label: "Workflows" },
   { value: "users", label: "Users" },
 ];
+
+function HealthIndicator() {
+  const [status, setStatus] = useState<"ok" | "error" | "limit">("ok");
+  const [label, setLabel] = useState("daemon ok");
+
+  useEffect(() => {
+    let active = true;
+    const check = async () => {
+      try {
+        const { apiGet } = await import("./services/api");
+        await apiGet("/healthz");
+        if (active) {
+          setStatus("ok");
+          setLabel("daemon ok");
+        }
+      } catch (err: any) {
+        if (active) {
+          if (err.status === 401) {
+            setStatus("limit");
+            setLabel("belum login");
+          } else {
+            setStatus("error");
+            setLabel("daemon mati");
+          }
+        }
+      }
+    };
+    check();
+    const id = setInterval(check, 15000);
+    return () => {
+      active = false;
+      clearInterval(id);
+    };
+  }, []);
+
+  return <StatusDot status={status} label={label} />;
+}
 
 export default function App() {
   const [view, setView] = useState<View>("console");
@@ -62,7 +99,7 @@ export default function App() {
               flex: "none",
             }}
           >
-            <StatusDot status="ok" label="daemon ok" />
+            <HealthIndicator />
             <Meta>mode lokal terbuka</Meta>
           </div>
         </header>
