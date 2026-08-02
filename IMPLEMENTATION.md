@@ -284,6 +284,12 @@ sebagai baris log biasa dan tidak pernah menggeser state — ada tesnya.
 16. **Output `final` tidak diulang di stream.** Adapter mengirim teks yang sama dua
     kali: sebagai potongan `partial` lalu sekali lagi sebagai `final`. Yang `final`
     dipakai jadi ringkasan strip Hasil saja.
+17. **Kotak follow-up permanen.** Mengembalikan perilaku dashboard lama, alasannya karena adapter backend
+    tidak memancarkan event `question` (alasan selengkapnya tentang print-mode dan penolakan
+    menebak pertanyaan dari prosa ada di `docs/rencana-paritas-cockpit.md §2`).
+18. **`AttemptsPanel` mengambil datanya sendiri.** Sebagai panel murni yang hidup setelah run selesai
+    (query snapshot dari `/logs`), ia memanggil state secara asinkron (fetch) langsung karena tidak
+    punya tempat di stream event daemon. Pola ini disiapkan untuk data view lainnya.
 
 ## Verifikasi
 
@@ -319,10 +325,11 @@ target dilewati sebelum ada satu pun yang start. Kasus terakhir itu tidak pernah
 muncul di mock, hanya di orchestrator sungguhan.
 
 **Yang belum terverifikasi terhadap daemon nyata:** jalur `question` → balas /
-serahkan. Adapter yang terpasang tidak memancarkan event `question` selama sesi
-pengujian, jadi jalur itu hanya diuji lewat unit test pemetaan dan mock. Kodenya
-mengikuti kontrak `POST /api/tasks/{id}/reply`, tapi belum pernah dijalankan
-melawan agent yang benar-benar bertanya.
+serahkan. `Event.question` tidak punya pemanggil di seluruh backend, dan itu
+**keputusan sadar** yang sudah tercatat di `catatan-implementasi.md §1.1`, bukan
+kebetulan sesi pengujian. Jalur balas utama adalah `FollowUpStrip`, dan
+`waiting_for_input` adalah jalur cadangan yang tinggal menunggu harness dengan mode
+interaktif sungguhan.
 
 ---
 
