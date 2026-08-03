@@ -1,3 +1,12 @@
+# --- tahap 1: build cockpit (React+TS, Vite) ---------------------------------
+FROM node:22-slim AS web
+WORKDIR /web
+COPY app/static/package.json app/static/package-lock.json* ./
+RUN npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+COPY app/static/ ./
+RUN npm run build
+
+# --- tahap 2: runtime --------------------------------------------------------
 FROM python:3.12-slim
 
 # git dibutuhkan untuk worktree isolasi mode otonom (PRD §8)
@@ -16,6 +25,10 @@ RUN pip install --no-cache-dir \
 COPY app ./app
 COPY migrations ./migrations
 COPY scripts ./scripts
+
+# hanya hasil build frontend yang masuk image — bukan src/ atau node_modules/
+RUN rm -rf ./app/static/node_modules ./app/static/src
+COPY --from=web /web/dist ./app/static/dist
 
 # CATATAN: harness agent (claude, agy, opencode) TIDAK dipasang di image ini.
 # Masing-masing terikat pada login langganan milikmu di host. Pasang di image

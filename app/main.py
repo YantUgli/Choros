@@ -21,7 +21,9 @@ from app.runtime import loop_supports_subprocess, subprocess_unsupported_message
 from app.security import auth_disabled
 
 log = logging.getLogger("choros")
-STATIC_DIR = Path(__file__).parent / "static"
+# Frontend adalah aplikasi Vite di app/static; yang disajikan hanya hasil build-nya.
+# Sumber (src/, node_modules/) tidak pernah ikut ter-mount.
+STATIC_DIR = Path(__file__).parent / "static" / "dist"
 
 
 @asynccontextmanager

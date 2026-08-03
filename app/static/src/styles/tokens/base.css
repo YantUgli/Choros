@@ -1,0 +1,17 @@
+/* choros — base element defaults built on the tokens.
+   SUMBER: _ds/choros-design-system-8c23b874…/tokens/base.css — disalin apa adanya. */
+:root { color-scheme: dark; }
+body {
+  background: var(--surface-app);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--fs-13);
+  line-height: var(--lh-body);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+code, kbd, samp, pre { font-family: var(--font-mono); }
+a { color: var(--brand); text-decoration: none; }
+a:hover { color: var(--brand-hover); }
+::selection { background: var(--brand-fill); }
+*, *::before, *::after { box-sizing: border-box; }

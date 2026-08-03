@@ -1,0 +1,53 @@
+/* choros cockpit — lapisan app di atas token DS.
+   Tidak ada nilai warna/ukuran baru di sini yang bukan turunan token. */
+@import "./tokens/fonts.css";
+@import "./tokens/colors.css";
+@import "./tokens/typography.css";
+@import "./tokens/spacing.css";
+@import "./tokens/base.css";
+
+html, body, #root { height: 100%; }
+body { margin: 0; overflow: hidden; }
+
+/* satu loop animasi di seluruh app: pulse status-dot running/thinking */
+@keyframes choros-pulse {
+  0%   { box-shadow: 0 0 0 0 currentColor; }
+  70%  { box-shadow: 0 0 0 5px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+/* scrollbar tipis — sama seperti kelas .ov di file design */
+.ov { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+.ov::-webkit-scrollbar { width: 10px; height: 10px; }
+.ov::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: var(--radius-full);
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+.ov::-webkit-scrollbar-track { background: transparent; }
+
+textarea { font: inherit; }
+textarea::placeholder, input::placeholder { color: #5B6472; }
+
+button, input, select, textarea { font-family: inherit; }
+
+/* focus ring teal — satu aturan untuk semua kontrol keyboard */
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+  border-radius: var(--radius-sm);
+}
+/* pointer tidak memunculkan ring; hanya keyboard */
+:focus:not(:focus-visible) { outline: none; }
+
+.choros-hover-row:hover { background: var(--hover-fill); }
+.choros-hover-line:hover { border-color: var(--line-strong) !important; color: var(--text) !important; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

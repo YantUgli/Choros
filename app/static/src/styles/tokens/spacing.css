@@ -1,0 +1,39 @@
+/* choros — spacing & shape tokens. 4px grid.
+   SUMBER: _ds/choros-design-system-8c23b874…/tokens/spacing.css — disalin apa adanya. */
+:root {
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* small consistent radii — NOT pills */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-full: 999px; /* reserved for status dots & toggle knob only */
+
+  /* borders — the primary separator (not shadow) */
+  --border-width: 1px;
+  --border: var(--border-width) solid var(--line);
+
+  /* restrained elevation — used rarely, for floating layers only */
+  --shadow-popover: 0 8px 24px rgba(0,0,0,0.45);
+  --shadow-modal: 0 16px 48px rgba(0,0,0,0.6);
+
+  /* tinggi kontrol on-grid */
+  --control-sm: 26px;
+  --control-sm-field: 28px;
+  --control-md: 32px;
+  --control-lg: 38px;
+  --chrome-bar: 48px;
+  --panel-header: 40px;
+
+  /* motion — sharp, quiet, no bounce */
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --dur-fast: 90ms;
+  --dur: 140ms;
+}

@@ -1,0 +1,55 @@
+/* choros — color tokens
+   Rule: color is SEMANTIC only, never decorative.
+   Brand accent (teal) is identity/active-state only and is kept
+   strictly separate from status colors.
+
+   SUMBER: _ds/choros-design-system-8c23b874…/tokens/colors.css — disalin apa adanya.
+   Jangan hardcode hex di komponen; semua warna keluar dari file ini. */
+:root {
+  /* --- base graphite ramp (near-monochrome) --- */
+  --bg: #0A0B0D;          /* app background, deepest */
+  --panel: #121417;       /* primary panel surface */
+  --panel-2: #191C21;     /* raised / nested surface */
+  --line: #262A31;        /* 1px separators & borders */
+  --text: #E6E9EF;        /* primary text */
+  --muted: #8A93A2;       /* secondary / metadata text */
+
+  /* derived neutrals */
+  --line-strong: #333944; /* hover/active border */
+  --overlay: rgba(0,0,0,0.55); /* modal scrim */
+  --hover-fill: rgba(255,255,255,0.035); /* subtle row hover */
+  --active-fill: rgba(255,255,255,0.06);
+
+  /* --- brand accent (identity + active only) --- */
+  --brand: #35D6C4;       /* teal */
+  --brand-dim: #1E8479;   /* teal, quieted for borders/fills */
+  --brand-fill: rgba(53,214,196,0.10); /* active-row wash */
+  --brand-hover: #5FE3D3; /* teal, satu langkah naik untuk hover */
+  --on-brand: #04201C;    /* teks di atas fill teal penuh */
+
+  /* --- status (disciplined) --- */
+  --ok: #57C97A;          /* success / healthy */
+  --warn: #E3B341;        /* warning */
+  --limit: #F0883E;       /* quota / 429 rate limit */
+  --error: #F0616B;       /* error / failed */
+  --thinking: #A184E0;    /* agent reasoning (dim violet) */
+  --running: var(--brand);/* running = brand teal */
+
+  /* status wash fills (for badges/rows, low alpha) */
+  --ok-fill: rgba(87,201,122,0.12);
+  --warn-fill: rgba(227,179,65,0.12);
+  --limit-fill: rgba(240,136,62,0.12);
+  --error-fill: rgba(240,97,107,0.12);
+  --thinking-fill: rgba(161,132,224,0.12);
+
+  /* --- semantic aliases --- */
+  --surface-app: var(--bg);
+  --surface-panel: var(--panel);
+  --surface-raised: var(--panel-2);
+  --border-default: var(--line);
+  --border-hover: var(--line-strong);
+  --text-primary: var(--text);
+  --text-secondary: var(--muted);
+  --accent: var(--brand);
+  --focus-ring: var(--brand);
+}

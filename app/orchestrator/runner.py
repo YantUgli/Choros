@@ -155,11 +155,18 @@ class TaskRunner:
             if self._semaphore.locked():
                 max_tasks = get_settings().max_concurrent_tasks
                 queue_pos = max(1, len(self._running) - max_tasks)
-                await self._emit(task_id, Event.status(f"menunggu antrean konkurensi... (posisi #{queue_pos})"))
+                await self._emit(
+                    task_id,
+                    Event.status(
+                        f"menunggu antrean konkurensi... (posisi #{queue_pos})",
+                        transition="queued",
+                        position=queue_pos,
+                    ),
+                )
             async with self._semaphore:
                 await self._execute(task_id)
         except asyncio.CancelledError:
-            await self._emit(task_id, Event.status("tugas dibatalkan"))
+            await self._emit(task_id, Event.status("tugas dibatalkan", transition="cancelled"))
             await self._finish(task_id, status="cancelled")
             raise
         except Exception as exc:  # jangan pernah mati diam-diam
@@ -244,7 +251,9 @@ class TaskRunner:
                 task_id,
                 Event.status(
                     f"tidak ada routing rule untuk kategori '{category}'. "
-                    "Tambahkan target di halaman Routing."
+                    "Tambahkan target di halaman Routing.",
+                    transition="chain_exhausted",
+                    reason="no_route",
                 ),
             )
             await self._finish(task_id, status="halted")
@@ -312,7 +321,14 @@ class TaskRunner:
                     output=result.attempt.output,
                     session_id=result.attempt.session_id,
                 )
-                await self._emit(task_id, Event.status(f"tugas selesai lewat {result.attempt.target.label}"))
+                await self._emit(
+                    task_id,
+                    Event.status(
+                        f"tugas selesai lewat {result.attempt.target.label}",
+                        transition="done",
+                        target=result.attempt.target.label,
+                    ),
+                )
             else:
                 await self._finish(task_id, status="halted")
         finally:
@@ -345,6 +361,9 @@ class TaskRunner:
     ) -> CascadeResult:
         needs_hands = ctx.category not in BRAIN_ONLY_CATEGORIES
         skipped: list[str] = []
+        # reset kuota terdekat yang ditemui — dipakai pesan halted supaya countdown
+        # di Console sama dengan yang ditampilkan halaman Quota.
+        earliest_reset: datetime | None = None
 
         for index, target in enumerate(targets):
             agent = target.agent
@@ -354,14 +373,32 @@ class TaskRunner:
             if not meets_floor(target.model, quality_floor, override=tier_override):
                 reason = f"di bawah batas mutu '{quality_floor}'"
                 skipped.append(f"{target.label} ({reason})")
-                await self._emit(ctx.task_id, Event.status(f"lewati {target.label}: {reason}"))
+                await self._emit(
+                    ctx.task_id,
+                    Event.status(
+                        f"lewati {target.label}: {reason}",
+                        transition="target_skipped",
+                        target=target.label,
+                        attempt=index + 1,
+                        reason="< quality_floor",
+                    ),
+                )
                 continue
 
             # tangan vs otak (PRD §3)
             if needs_hands and not adapter_can_execute(agent.adapter_type):
                 reason = "model mentah tanpa tangan, kategori ini butuh eksekusi"
                 skipped.append(f"{target.label} ({reason})")
-                await self._emit(ctx.task_id, Event.status(f"lewati {target.label}: {reason}"))
+                await self._emit(
+                    ctx.task_id,
+                    Event.status(
+                        f"lewati {target.label}: {reason}",
+                        transition="target_skipped",
+                        target=target.label,
+                        attempt=index + 1,
+                        reason="tanpa tangan",
+                    ),
+                )
                 continue
 
             # [3] cek kuota
@@ -372,7 +409,19 @@ class TaskRunner:
             if exhausted:
                 reason = f"kuota mentok sampai {until:%H:%M %d/%m}" if until else "kuota mentok"
                 skipped.append(f"{target.label} ({reason})")
-                await self._emit(ctx.task_id, Event.status(f"lewati {target.label}: {reason}"))
+                if until is not None and (earliest_reset is None or until < earliest_reset):
+                    earliest_reset = until
+                await self._emit(
+                    ctx.task_id,
+                    Event.status(
+                        f"lewati {target.label}: {reason}",
+                        transition="target_skipped",
+                        target=target.label,
+                        attempt=index + 1,
+                        reason="exhausted",
+                        reset_at=until.isoformat() if until else None,
+                    ),
+                )
                 continue
 
             # [1] titik-ulang berbasis plan
@@ -394,6 +443,11 @@ class TaskRunner:
                     f"menjalankan {target.label} (prioritas {target.priority})",
                     agent=agent.name,
                     model=target.model,
+                    transition="target_started",
+                    target=target.label,
+                    attempt=index + 1,
+                    priority=target.priority,
+                    plan_reused=index > 0,
                 ),
             )
 
@@ -428,7 +482,13 @@ class TaskRunner:
             if attempt.status == "rate_limited":
                 await self._emit(
                     ctx.task_id,
-                    Event.status(f"{target.label} mentok kuota → lanjut target berikutnya"),
+                    Event.status(
+                        f"{target.label} mentok kuota → lanjut target berikutnya",
+                        transition="target_failed",
+                        target=target.label,
+                        attempt=index + 1,
+                        reason="429 / limit",
+                    ),
                 )
             else:
                 detail = (attempt.error.data.get("message") if attempt.error else "") or ""
@@ -437,6 +497,10 @@ class TaskRunner:
                     Event.status(
                         f"{target.label} gagal ({attempt.status}) → lanjut target berikutnya",
                         detail=detail[:400],
+                        transition="target_failed",
+                        target=target.label,
+                        attempt=index + 1,
+                        reason=attempt.status,
                     ),
                 )
 
@@ -447,6 +511,8 @@ class TaskRunner:
                 "eksekusi tertahan: semua target habis. Plan & log tersimpan, "
                 "jalankan ulang setelah kuota reset.",
                 skipped=skipped,
+                transition="chain_exhausted",
+                reset_at=earliest_reset.isoformat() if earliest_reset else None,
             ),
         )
         return CascadeResult(attempt=None, skipped=skipped)
