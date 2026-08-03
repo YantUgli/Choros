@@ -53,7 +53,7 @@ export function BrowseModal({
       setCwd(name);
       return;
     }
-    const sep = cwd.endsWith("\\") ? "" : "\\";
+    const sep = cwd.endsWith("/") ? "" : "/";
     setCwd(cwd + sep + name);
   };
 
