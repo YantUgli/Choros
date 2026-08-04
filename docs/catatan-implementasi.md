@@ -203,3 +203,44 @@ tidak pernah dijalankan manusia.
 Ini celah kepercayaan terbesar yang tersisa, dan bukan celah teoretis: ketiga bug
 di §3.1 hidup di lapisan itu dan tidak satu pun tertangkap oleh 105 test.
 Checklist 15 langkahnya ada di `rencana-penyelesaian.md` §6.
+
+## 5. Keputusan UI dan Cockpit
+
+- Keputusan: Layout Toggle Console → dua mode (stream-besar vs split), bukan
+  drag handle. Implementasi: tombol toggle di header LiveConsole. **Selesai
+  (commit `d038eee`).**
+- Keputusan: Plan→Execute Bridge → tombol "Gunakan sebagai Task" di ResultStrip
+  yang meng-copy summary planning run ke ComposePanel. **Selesai (commit yang sama).**
+- Keputusan: modal BrowseModal in-app (bukan dialog OS native). Alasan: dialog
+  native terbuka di layar mesin server, bukan browser — cacat arsitektural, bukan
+  bug. Implementasi: endpoint `GET /api/fs/list` + `BrowseModal.tsx` dengan deteksi
+  separator dari `cwd`. **Selesai (commit `8eabc5c`).**
+- Follow-up dan AttemptsPanel hilang waktu migrasi ke React cockpit. Penyebab:
+  pintu masuknya di UI saja yang hilang, endpoint-nya sudah ada. **Selesai.**
+- Lima tab cockpit awalnya memakai `fixtures.ts` (405 baris data hardcoded).
+  Kabel frontend ke backend disambung satu per satu. **Selesai.**
+- Pelajaran: batch penulisan `task_events` (~50 event/500ms) dikerjakan di
+  Fase 3.5 item 5 untuk menekan ribuan transaksi kecil per run.
+- Endpoint `GET /api/tasks/{id}/logs` (riwayat cascade) sekarang dipakai panel
+  Percobaan di UI — celah visibilitas dari §2.4 sudah tertutup.
+- Quota display (Claude Code live, Gemini/Antigravity live, alert token limit
+  OpenCode) — **kode selesai** (commit `7d37900`). Di Windows dua bug spesifik
+  ditemukan lalu diperbaiki (commit `bc1115d`): (1) `claude_usage.py` memanggil
+  `create_subprocess_exec("claude", …)` langsung, yang tidak melakukan resolusi
+  `PATHEXT` seperti shell — gagal menemukan shim `claude.cmd` hasil
+  `npm install -g`. Diperbaiki dengan `shutil.which` (pola yang sama dengan
+  `app/adapters/base.py:166`) lalu percabangan spawn: `.cmd`/`.bat` lewat
+  `create_subprocess_shell` + `subprocess.list2cmdline`, binary lain tetap lewat
+  `create_subprocess_exec`. (2) `gemini_usage.py` hard-dependency ke GNOME
+  keyring (`ctypes.util.find_library("secret-1")`), selalu `None` di Windows.
+  Ditambah cabang paralel `_read_keyring_token_windows()` via
+  `advapi32.CredReadW` (Windows Credential Manager), `TargetName` dikonfirmasi
+  empiris = `gemini:antigravity`, skema blob JSON sama dengan Linux. Dispatch
+  berdasarkan `sys.platform`, Linux tidak berubah logikanya (hanya di-rename
+  `_read_keyring_token_linux`). Verifikasi manual di Windows: Claude usage
+  tidak lagi `claude_not_found`; Gemini usage berhasil round-trip ke
+  `cloudcode-pa.googleapis.com` (return `token_expired` — token memang expired
+  di mesin uji, membuktikan baca keyring + panggilan API jalan).
+  **Belum diverifikasi:** `_read_keyring_token_linux()` (hasil rename murni,
+  belum dijalankan ulang di Linux sungguhan setelah rename), dan kondisi
+  `agy`/`claude` belum ter-install/belum login belum diuji eksplisit.
