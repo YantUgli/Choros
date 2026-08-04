@@ -8,6 +8,7 @@ export interface WireAgentFull {
   default_model: string | null;
   config: Record<string, unknown>;
   is_active: boolean;
+  token_limit?: number | null;
 }
 
 export interface WireAdapterInfo {

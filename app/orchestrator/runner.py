@@ -619,6 +619,7 @@ class TaskRunner:
                     model=target.model,
                     tokens=tokens,
                     window_type=(agent.config or {}).get("window_type", "daily"),
+                    token_limit=agent.token_limit,
                 )
                 await session.commit()
 

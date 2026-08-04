@@ -10,6 +10,8 @@ export interface WireAgent {
   id: number;
   name: string;
   default_model: string | null;
+  adapter_type?: string;
+  token_limit?: number | null;
 }
 
 export interface AttemptRow {

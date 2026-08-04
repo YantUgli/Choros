@@ -3,6 +3,8 @@
  * Horizontal quota/usage meter. Fill color is semantic by threshold:
  * >= 100% limit · >= 85% warn · sisanya brand.
  */
+import { useEffect, useState } from "react";
+
 export type MeterTone = "brand" | "warn" | "limit" | "ok" | "error";
 
 export interface MeterBarProps {
@@ -34,6 +36,15 @@ export function MeterBar({
     ok: "var(--ok)",
     error: "var(--error)",
   }[t];
+
+  // Mulai dari 0 pada mount, animate ke nilai target setelah frame pertama.
+  // Juga animate setiap kali value berubah (polling 60s).
+  const [live, setLive] = useState(0);
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setLive(pct));
+    return () => cancelAnimationFrame(id);
+  }, [pct]);
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
       {(label || showValue) && (
@@ -50,7 +61,8 @@ export function MeterBar({
           {showValue && (
             <span style={{ color }}>
               {value.toLocaleString()}
-              {unit ? " " + unit : ""} <span style={{ color: "var(--muted)" }}>/ {max.toLocaleString()}</span>
+              {unit ? " " + unit : ""}{" "}
+              <span style={{ color: "var(--muted)" }}>/ {max.toLocaleString()}</span>
             </span>
           )}
         </div>
@@ -66,10 +78,10 @@ export function MeterBar({
       >
         <div
           style={{
-            width: pct * 100 + "%",
+            width: live * 100 + "%",
             height: "100%",
             background: color,
-            transition: "width var(--dur) var(--ease)",
+            transition: "width 700ms cubic-bezier(0.2, 0, 0, 1)",
           }}
         />
       </div>

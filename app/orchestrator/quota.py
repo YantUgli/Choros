@@ -136,6 +136,7 @@ async def record_usage(
     model: str | None,
     tokens: int,
     window_type: str = "daily",
+    token_limit: int | None = None,
 ) -> QuotaWindow:
     """Akumulasi token ke window konsumsi aktif (bukan cooldown); buat window baru jika lewat."""
     window = await _get_token_window(session, user_id=user_id, agent_id=agent_id, model=model)
@@ -153,6 +154,8 @@ async def record_usage(
         )
         session.add(window)
     window.tokens_used = (window.tokens_used or 0) + max(0, tokens)
+    if token_limit and window.tokens_used >= token_limit:
+        window.is_exhausted = True
     await session.flush()
     return window
 

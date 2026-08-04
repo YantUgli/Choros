@@ -39,6 +39,7 @@ export function AgentsScreen() {
         adapter,
         model: model === "—" ? null : model,
         active,
+        tokenLimit: existing?.token_limit ?? null,
       },
       async (draft) => {
         setErrorMsg(null);
@@ -50,6 +51,7 @@ export function AgentsScreen() {
             base_url: existing?.base_url ?? null,
             config: existing?.config ?? {},
             is_active: draft.active,
+            token_limit: draft.tokenLimit,
           });
           reload();
         } catch (e: any) {
@@ -72,6 +74,7 @@ export function AgentsScreen() {
             base_url: null,
             config: {},
             is_active: draft.active,
+            token_limit: draft.tokenLimit,
           });
           reload();
         } catch (e: any) {

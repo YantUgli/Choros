@@ -38,6 +38,7 @@ class AgentIn(BaseModel):
     default_model: str | None = None
     config: dict[str, Any] = Field(default_factory=dict)
     is_active: bool = True
+    token_limit: int | None = None
 
 
 class AgentOut(AgentIn):
