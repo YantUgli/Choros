@@ -1,0 +1,8 @@
+{
+  "mcp": {
+    "codebase-memory-mcp": {
+      "type": "local",
+      "command": ["/home/kbuser/.local/bin/codebase-memory-mcp"]
+    }
+  }
+}

@@ -12,11 +12,15 @@ const strip = {
 /** done — Hasil + worktree review (diff / merge / discard). */
 export function ResultStrip({
   result,
+  category,
+  onExecutePlan,
   onDiff,
   onMerge,
   onDiscard,
 }: {
   result: RunResult;
+  category?: string;
+  onExecutePlan?: () => void;
   onDiff: () => void;
   onMerge: () => void;
   onDiscard: () => void;
@@ -49,6 +53,11 @@ export function ResultStrip({
           {result.tokens.toLocaleString("en-US")} tok · {result.duration}
         </Meta>
         <div style={{ marginLeft: "auto", display: "flex", gap: "var(--space-2)" }}>
+          {(category === "planning" || category === "text_planning") && onExecutePlan && (
+            <Button variant="primary" size="sm" onClick={onExecutePlan}>
+              Eksekusi plan ini →
+            </Button>
+          )}
           {result.isolated ? (
             <>
               <Button variant="ghost" size="sm" onClick={onDiff}>

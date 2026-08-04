@@ -7,9 +7,11 @@ export interface FsListResult {
 }
 
 export async function fetchFsList(path: string): Promise<FsListResult> {
-  const url = new URL("/api/fs/list", window.location.origin || "http://localhost");
+  const params = new URLSearchParams();
   if (path) {
-    url.searchParams.set("path", path);
+    params.set("path", path);
   }
-  return apiGet<FsListResult>(url.pathname + url.search);
+  const suffix = params.toString() ? `?${params}` : "";
+  const url = `/api/fs/list${suffix}`;
+  return apiGet<FsListResult>(url);
 }

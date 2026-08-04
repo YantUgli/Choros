@@ -8,6 +8,7 @@ import {
   CANCELLABLE_STATUSES,
   type ConsoleState,
   type ConsoleStatus,
+  type TaskCategory,
 } from "../../state/types";
 import type { ConsoleActions } from "../../state/useConsole";
 import { AttemptsPanel } from "./AttemptsPanel";
@@ -51,6 +52,9 @@ export function ConsoleScreen({
   const modals = useModals();
   const [selectedSession, setSelectedSession] = useState<number | null>(null);
   const [attemptsFailed, setAttemptsFailed] = useState(false);
+  const [composePrompt, setComposePrompt] = useState("");
+  const [composeCategory, setComposeCategory] = useState<TaskCategory>("coding_complex");
+  const [layoutMode, setLayoutMode] = useState<"default" | "split">("default");
 
   // Run baru berhak atas percobaan pengambilan jejaknya sendiri.
   useEffect(() => {
@@ -66,6 +70,13 @@ export function ConsoleScreen({
   const canCancel = CANCELLABLE_STATUSES.includes(state.status);
   const live = selectedSession === null;
   const category = state.request?.category ?? "coding_complex";
+
+  const onExecutePlan = useCallback(() => {
+    if (state.result) {
+      setComposeCategory("coding_complex");
+      setComposePrompt(`[Referensi plan dari run #${state.runId}]\n${state.result.summary}\n\n---\n`);
+    }
+  }, [state.runId, state.result]);
 
   // ⌘↵ / Ctrl↵ dari mana pun di layar Console: submit ditangani ComposePanel;
   // Esc mengembalikan fokus ke stream (melepas kunci fokus balasan).
@@ -105,6 +116,10 @@ export function ConsoleScreen({
         <ComposePanel
           busy={busy}
           canCancel={canCancel}
+          prompt={composePrompt}
+          setPrompt={setComposePrompt}
+          category={composeCategory}
+          setCategory={setComposeCategory}
           onRun={(request) => {
             setSelectedSession(null);
             actions.submit(request);
@@ -193,6 +208,13 @@ export function ConsoleScreen({
                 <Button variant="ghost" size="sm" onClick={actions.clearStream}>
                   bersihkan
                 </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setLayoutMode((m) => (m === "default" ? "split" : "default"))}
+                >
+                  {layoutMode === "default" ? "⊞ split" : "⊟ default"}
+                </Button>
                 <Button variant="ghost" size="sm" onClick={actions.jumpLatest}>
                   ↓ jump
                 </Button>
@@ -232,87 +254,115 @@ export function ConsoleScreen({
               onJumpLatest={actions.jumpLatest}
             />
 
-            {showAttempts && <AttemptsPanel taskId={state.runId} onEmpty={onAttemptsEmpty} />}
-            {showCascade && !showAttempts && (
-              <CascadePanel runId={state.runId} attempts={state.attempts} status={state.status} />
-            )}
+            {(() => {
+              const footerContent = (
+                <>
+                  {showAttempts && <AttemptsPanel taskId={state.runId} onEmpty={onAttemptsEmpty} />}
+                  {showCascade && !showAttempts && (
+                    <CascadePanel runId={state.runId} attempts={state.attempts} status={state.status} />
+                  )}
 
-            {state.status === "done" && state.result && (
-              <>
-                <ResultStrip
-                  result={state.result}
-                  onDiff={() => modals.openDiff(state.runId, actions.reset)}
-                  onMerge={async () => {
-                    try {
-                      await mergeDiff(state.runId);
-                      actions.reset();
-                    } catch (err) {
-                      modals.openConfirm({
-                        title: "Error",
-                        body: `Gagal merge: ${String(err)}`,
-                        onConfirm: () => {}
-                      });
-                    }
-                  }}
-                  onDiscard={async () => {
-                    modals.openConfirm({
-                      title: "Buang perubahan",
-                      body: "Buang semua perubahan di worktree ini?",
-                      onConfirm: async () => {
-                        try {
-                          await discardDiff(state.runId);
-                          actions.reset();
-                        } catch (err) {
+                  {state.status === "done" && state.result && (
+                    <>
+                      <ResultStrip
+                        result={state.result}
+                        category={category}
+                        onExecutePlan={onExecutePlan}
+                        onDiff={() => modals.openDiff(state.runId, actions.reset)}
+                        onMerge={async () => {
+                          try {
+                            await mergeDiff(state.runId);
+                            actions.reset();
+                          } catch (err) {
+                            modals.openConfirm({
+                              title: "Error",
+                              body: `Gagal merge: ${String(err)}`,
+                              onConfirm: () => {}
+                            });
+                          }
+                        }}
+                        onDiscard={async () => {
                           modals.openConfirm({
-                            title: "Error",
-                            body: `Gagal discard: ${String(err)}`,
-                            onConfirm: () => {}
+                            title: "Buang perubahan",
+                            body: "Buang semua perubahan di worktree ini?",
+                            onConfirm: async () => {
+                              try {
+                                await discardDiff(state.runId);
+                                actions.reset();
+                              } catch (err) {
+                                modals.openConfirm({
+                                  title: "Error",
+                                  body: `Gagal discard: ${String(err)}`,
+                                  onConfirm: () => {}
+                                });
+                              }
+                            }
                           });
-                        }
-                      }
-                    });
-                  }}
-                />
-                <FollowUpStrip onSend={actions.followUp} />
-              </>
-            )}
+                        }}
+                      />
+                      <FollowUpStrip onSend={actions.followUp} />
+                    </>
+                  )}
 
-            {state.status === "halted" && state.halt && (
-              <HaltedStrip
-                halt={state.halt}
-                category={category}
-                onResume={actions.resume}
-                onQuota={onOpenQuota}
-              />
-            )}
+                  {state.status === "halted" && state.halt && (
+                    <HaltedStrip
+                      halt={state.halt}
+                      category={category}
+                      onResume={actions.resume}
+                      onQuota={onOpenQuota}
+                    />
+                  )}
 
-            {state.status === "error" && state.failure && (
-              <ErrorStrip
-                failure={state.failure}
-                onRetry={actions.retry}
-                onCopy={() => {
-                  void navigator.clipboard?.writeText(
-                    state.stream.map((e) => `${e.ts} ${e.source} ${e.text}`).join("\n"),
-                  );
-                }}
-              />
-            )}
+                  {state.status === "error" && state.failure && (
+                    <ErrorStrip
+                      failure={state.failure}
+                      onRetry={actions.retry}
+                      onCopy={() => {
+                        void navigator.clipboard?.writeText(
+                          state.stream.map((e) => `${e.ts} ${e.source} ${e.text}`).join("\n"),
+                        );
+                      }}
+                    />
+                  )}
 
-            {showPlainFooter && (
-              <div
-                style={{
-                  flex: "none",
-                  borderTop: "1px solid var(--line)",
-                  padding: "var(--space-2) var(--space-4)",
-                }}
-              >
-                <Meta>
-                  {state.paused
-                    ? "stream dijeda (tampilan) — event tetap direkam"
-                    : "auto-scroll aktif · hasil & worktree review muncul saat done"}
-                </Meta>
-              </div>
-            )}
+                  {showPlainFooter && (
+                    <div
+                      style={{
+                        flex: "none",
+                        borderTop: "1px solid var(--line)",
+                        padding: "var(--space-2) var(--space-4)",
+                      }}
+                    >
+                      <Meta>
+                        {state.paused
+                          ? "stream dijeda (tampilan) — event tetap direkam"
+                          : "auto-scroll aktif · hasil & worktree review muncul saat done"}
+                      </Meta>
+                    </div>
+                  )}
+                </>
+              );
+
+              if (layoutMode === "split") {
+                return (
+                  <div
+                    style={{
+                      flex: 1,
+                      minHeight: 0,
+                      overflow: "auto",
+                      display: "flex",
+                      flexDirection: "column",
+                      borderTop: "1px solid var(--line)",
+                      background: "var(--panel)",
+                    }}
+                  >
+                    {footerContent}
+                  </div>
+                );
+              }
+
+              return footerContent;
+            })()}
           </>
         )}
       </div>

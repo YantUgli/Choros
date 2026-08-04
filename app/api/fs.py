@@ -20,9 +20,25 @@ class FsListResult(BaseModel):
 @router.get("/list", response_model=FsListResult)
 async def list_dir(user: CurrentUser, path: str = "") -> FsListResult:
     if not path:
-        # Titik masuk virtual: daftar drive asli mesin ini (Windows).
-        drives = list(os.listdrives()) if hasattr(os, "listdrives") else []
-        return FsListResult(path="", parent=None, entries=drives)
+        # Linux: daftar root directory. Windows: daftar drive.
+        if os.name == "nt":
+            drives = list(os.listdrives()) if hasattr(os, "listdrives") else ["C:\\"]
+            return FsListResult(path="", parent=None, entries=drives)
+        else:
+            # Linux/Mac: gunakan root sebagai default
+            entries: list[str] = []
+            try:
+                with os.scandir("/") as it:
+                    for entry in it:
+                        try:
+                            if entry.is_dir():
+                                entries.append(entry.name)
+                        except OSError:
+                            continue
+            except PermissionError:
+                raise HTTPException(status_code=403, detail="tidak punya izin membaca root directory")
+            entries.sort(key=str.lower)
+            return FsListResult(path="/", parent=None, entries=entries)
 
     p = Path(path)
     if not p.is_dir():

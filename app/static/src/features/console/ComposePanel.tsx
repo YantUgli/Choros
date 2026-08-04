@@ -31,13 +31,24 @@ const FLOORS: { value: string; label: string }[] = [
 export interface ComposeProps {
   busy: boolean;
   canCancel: boolean;
+  prompt: string;
+  setPrompt: (prompt: string) => void;
+  category: TaskCategory;
+  setCategory: (category: TaskCategory) => void;
   onRun: (request: RunRequest) => void;
   onCancel: () => void;
 }
 
-export function ComposePanel({ busy, canCancel, onRun, onCancel }: ComposeProps) {
-  const [prompt, setPrompt] = useState("");
-  const [category, setCategory] = useState<TaskCategory>("coding_complex");
+export function ComposePanel({
+  busy,
+  canCancel,
+  prompt,
+  setPrompt,
+  category,
+  setCategory,
+  onRun,
+  onCancel,
+}: ComposeProps) {
   const [mode, setMode] = useState<TaskMode>("interaktif");
   const [projectPath, setProjectPath] = useState("");
   const [floor, setFloor] = useState("");
@@ -147,7 +158,7 @@ export function ComposePanel({ busy, canCancel, onRun, onCancel }: ComposeProps)
           <Button
             variant="secondary"
             size="sm"
-            onClick={() => modals.openBrowse(projectPath || "C:\\project", setProjectPath)}
+            onClick={() => modals.openBrowse(projectPath || "", setProjectPath)}
           >
             Browse…
           </Button>
