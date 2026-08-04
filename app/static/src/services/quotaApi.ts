@@ -25,6 +25,7 @@ export interface QuotaRow {
   key: string;
   agentId: number;
   agent: string;
+  adapterType: string | undefined;
   model: string | null;
   used: number;
   windowType: string | null;
@@ -32,6 +33,7 @@ export interface QuotaRow {
   /** waktu selesai cooldown dalam string ISO; null = tidak sedang cooldown */
   cooldownEnd: string | null;
   exhausted: boolean;
+  tokenLimit: number | null;
 }
 
 /** Window dianggap hidup persis seperti app/orchestrator/quota.py:_get_*_window. */
@@ -73,6 +75,7 @@ export function toQuotaRows(
       return {
         key,
         agentId,
+        adapterType: agent?.adapter_type,
         agent: agent?.name || `agent #${agentId}`,
         model: model ?? agent?.default_model ?? null,
         used: token?.tokens_used ?? 0,
@@ -80,6 +83,7 @@ export function toQuotaRows(
         windowEnd: token?.window_end ?? null,
         cooldownEnd,
         exhausted,
+        tokenLimit: agent?.token_limit ?? null,
       };
     })
     .sort((a, b) => a.agent.localeCompare(b.agent) || (a.model ?? "").localeCompare(b.model ?? ""));

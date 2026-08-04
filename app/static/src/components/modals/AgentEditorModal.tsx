@@ -11,6 +11,7 @@ export interface AgentDraft {
   adapter: string;
   model: string;
   active: boolean;
+  tokenLimit: number | null;
 }
 
 export interface AgentPreset {
@@ -19,6 +20,7 @@ export interface AgentPreset {
   adapter?: string;
   model?: string | null;
   active?: boolean;
+  tokenLimit?: number | null;
 }
 
 /**
@@ -48,6 +50,7 @@ export function AgentEditorModal({
     model:
       preset.model && initialModels.includes(preset.model) ? preset.model : (initialModels[0] ?? ""),
     active: preset.active !== false,
+    tokenLimit: preset.tokenLimit ?? null,
   });
 
   // Sinkronisasi draft.adapter setelah adapters termuat jika preset.adapter tidak ada / tidak valid
@@ -164,6 +167,23 @@ export function AgentEditorModal({
           />
           <span style={{ fontSize: "var(--fs-13)" }}>aktif</span>
         </div>
+
+        {draft.adapter === "opencode" && (
+          <Field label="Token limit (opsional)">
+            <Input
+              mono
+              size="md"
+              type="number"
+              min={0}
+              value={draft.tokenLimit ?? ""}
+              onChange={(e) => {
+                const v = e.target.value;
+                setDraft({ ...draft, tokenLimit: v === "" ? null : Math.max(0, parseInt(v, 10)) });
+              }}
+              placeholder="kosong = tidak ada limit"
+            />
+          </Field>
+        )}
 
         <div
           style={{
