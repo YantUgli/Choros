@@ -9,6 +9,7 @@ export interface ClaudeUsage {
   session: ClaudeUsagePeriod | null;
   week: ClaudeUsagePeriod | null;
   error?: string;
+  detail?: string;
   raw?: string;
 }
 

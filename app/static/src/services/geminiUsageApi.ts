@@ -18,6 +18,7 @@ export interface GeminiGroup {
 export interface GeminiUsage {
   groups?: GeminiGroup[];
   error?: string;
+  detail?: string;
   status?: number;
 }
 

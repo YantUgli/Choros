@@ -40,11 +40,17 @@ function ClaudeSection({ data }: { data: ClaudeUsage | null }) {
   if (data.error) {
     const msgs: Record<string, string> = {
       claude_not_found: "binary 'claude' tidak ditemukan di PATH",
-      timeout: "subprocess timeout (> 10 detik)",
+      timeout: "subprocess timeout (> 30 detik)",
     };
+    const msg = msgs[data.error] ?? `error: ${data.error}`;
     return (
       <div style={{ color: "var(--warn)", fontSize: "var(--fs-13)" }}>
-        {msgs[data.error] ?? `error: ${data.error}`}
+        {msg}
+        {data.detail && (
+          <div style={{ color: "var(--muted)", fontSize: "var(--fs-12)", marginTop: 2 }}>
+            {data.detail}
+          </div>
+        )}
       </div>
     );
   }
@@ -80,7 +86,7 @@ function ClaudeSection({ data }: { data: ClaudeUsage | null }) {
 const GEMINI_ERROR_MSG: Record<string, string> = {
   token_not_found: "token agy tidak ditemukan di keyring — buka agy sekali",
   token_expired: "token expired — buka agy sekali untuk memperbarui",
-  keyring_unavailable: "GNOME keyring tidak tersedia (Linux only)",
+  keyring_unavailable: "keyring OS tidak tersedia di platform ini",
   api_error: "gagal menghubungi Gemini API",
 };
 
@@ -100,6 +106,11 @@ function GeminiSection({ data }: { data: GeminiUsage | null }) {
         }}
       >
         ⚠ {GEMINI_ERROR_MSG[data.error] ?? `error: ${data.error}`}
+        {data.detail && (
+          <div style={{ color: "var(--muted)", fontSize: "var(--fs-12)", marginTop: 2 }}>
+            {data.detail}
+          </div>
+        )}
       </div>
     );
   }

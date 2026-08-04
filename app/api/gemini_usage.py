@@ -5,6 +5,7 @@ import ctypes
 import ctypes.util
 import json
 import logging
+import sys
 import time
 
 import httpx
@@ -18,8 +19,15 @@ router = APIRouter(prefix="/api/quota", tags=["quota"])
 
 QUOTA_URL = "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary"
 
+
+def _platform_supported() -> bool:
+    if sys.platform == "win32":
+        return True  # CredReadW selalu tersedia di Windows, tidak perlu find_library
+    return bool(ctypes.util.find_library("secret-1"))
+
+
 # Dievaluasi sekali saat modul dimuat — hasilnya tidak berubah selama proses hidup
-_LIB_AVAILABLE: bool = bool(ctypes.util.find_library("secret-1"))
+_LIB_AVAILABLE: bool = _platform_supported()
 
 # HTTP client persisten — reuse TCP connection (keep-alive) antar request
 _http_client: httpx.AsyncClient = httpx.AsyncClient(
@@ -31,7 +39,7 @@ _http_client: httpx.AsyncClient = httpx.AsyncClient(
 _cached_token: str | None = None
 
 
-def _read_keyring_token() -> str | None:
+def _read_keyring_token_linux() -> str | None:
     """Baca access token agy dari GNOME keyring via libsecret (ctypes, tanpa schema).
     Dipanggil dari thread pool — jangan panggil langsung dari async handler."""
     lib_s = ctypes.util.find_library("secret-1")
@@ -97,6 +105,63 @@ def _read_keyring_token() -> str | None:
         return data.get("token", {}).get("access_token")
     except (json.JSONDecodeError, AttributeError):
         return None
+
+
+# TargetName dan format blob dikonfirmasi via `cmdkey /list` + CredReadW manual
+# (lihat docs/rencana-quota-windows.md, langkah W1): Type=Generic,
+# TargetName="gemini:antigravity", blob JSON UTF-8 polos — skema sama persis
+# dengan Linux (`{"token": {"access_token": "..."}}`).
+_CRED_TARGET_NAME = "gemini:antigravity"
+_CRED_TYPE_GENERIC = 1
+
+
+def _read_keyring_token_windows() -> str | None:
+    """Baca access token agy dari Windows Credential Manager via advapi32 CredReadW.
+    Dipanggil dari thread pool — jangan panggil langsung dari async handler."""
+    from ctypes import wintypes
+
+    class _CREDENTIAL(ctypes.Structure):
+        _fields_ = [
+            ("Flags", wintypes.DWORD),
+            ("Type", wintypes.DWORD),
+            ("TargetName", wintypes.LPWSTR),
+            ("Comment", wintypes.LPWSTR),
+            ("LastWritten", wintypes.FILETIME),
+            ("CredentialBlobSize", wintypes.DWORD),
+            ("CredentialBlob", ctypes.POINTER(ctypes.c_char)),
+            ("Persist", wintypes.DWORD),
+            ("AttributeCount", wintypes.DWORD),
+            ("Attributes", ctypes.c_void_p),
+            ("TargetAlias", wintypes.LPWSTR),
+            ("UserName", wintypes.LPWSTR),
+        ]
+
+    advapi32 = ctypes.windll.advapi32
+    advapi32.CredReadW.argtypes = [
+        wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+        ctypes.POINTER(ctypes.POINTER(_CREDENTIAL)),
+    ]
+    advapi32.CredReadW.restype = wintypes.BOOL
+
+    cred_ptr = ctypes.POINTER(_CREDENTIAL)()
+    ok = advapi32.CredReadW(_CRED_TARGET_NAME, _CRED_TYPE_GENERIC, 0, ctypes.byref(cred_ptr))
+    if not ok:
+        return None
+    try:
+        c = cred_ptr.contents
+        blob = ctypes.string_at(c.CredentialBlob, c.CredentialBlobSize)
+        data = json.loads(blob.decode("utf-8"))
+        return data.get("token", {}).get("access_token")
+    except (json.JSONDecodeError, UnicodeDecodeError, AttributeError):
+        return None
+    finally:
+        advapi32.CredFree(cred_ptr)
+
+
+def _read_keyring_token() -> str | None:
+    if sys.platform == "win32":
+        return _read_keyring_token_windows()
+    return _read_keyring_token_linux()
 
 
 async def _get_token() -> str | None:

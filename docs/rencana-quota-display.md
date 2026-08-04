@@ -106,7 +106,8 @@ Konversi: `pct_used = (1 - remainingFraction) * 100`
 - Cross-device aggregation
 - Token refresh otomatis untuk Gemini (butuh `client_secret` embedded di binary `agy`)
 - Notifikasi push / webhook saat limit tercapai
-- Gemini di Windows (GNOME keyring adalah Linux-only; Windows punya credential store terpisah)
+- ~~Gemini di Windows (GNOME keyring adalah Linux-only; Windows punya credential store terpisah)~~
+  — selesai, lihat `docs/rencana-quota-windows.md`
 
 ---
 
