@@ -13,6 +13,8 @@ import type { RunRequest } from "../state/types";
 export type DaemonSink = (event: ConsoleEvent) => void;
 
 export interface DaemonClient {
+  /** Sambungkan stream dari task lama/berjalan (tanpa submit). */
+  attach(taskId: number): void;
   /** Kirim tugas baru. Daemon membalas SLOT_FREE lalu aliran event. */
   submit(request: RunRequest, runId: number): void;
   /** Jawab event `question` yang sedang menahan run. */

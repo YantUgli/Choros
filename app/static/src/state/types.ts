@@ -64,6 +64,7 @@ export interface RunRequest {
   qualityFloor: string | null;
   /** true = menulis langsung ke working tree, tanpa worktree terisolasi. */
   noIsolation: boolean;
+  taskRunId?: number;
 }
 
 /** Satu percobaan target dalam rantai prioritas — bahan cerita panel Cascade. */

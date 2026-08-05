@@ -1,19 +1,13 @@
 import { useState, type KeyboardEvent } from "react";
-import { Button, Input, Select, Toggle } from "../../components/ds";
-import { Caret } from "../../components/Icons";
+import { Badge, Button, Input, Select, Toggle } from "../../components/ds";
+
 import { Field, Label } from "../../components/Label";
 import { useModals } from "../../state/modals";
 import { useApiResource } from "../../state/useApiResource";
 import { fetchCategories } from "../../services/routingApi";
 import type { RunRequest, TaskCategory, TaskMode } from "../../state/types";
 
-// data contoh
-const PLAN_STEPS = [
-  "1. baca modul auth",
-  "2. petakan pemakaian token",
-  "3. pindah ke httponly cookie",
-  "4. jalankan typecheck",
-];
+
 
 /**
  * Nama tier persis seperti yang dimengerti `app/orchestrator/quality.py::_floor_tier`.
@@ -37,6 +31,16 @@ export interface ComposeProps {
   setCategory: (category: TaskCategory) => void;
   onRun: (request: RunRequest) => void;
   onCancel: () => void;
+  /** Judul section (default "Kirim tugas"). */
+  title?: string;
+  /** Kategori dikunci per-lane → tampil sebagai badge, bukan dropdown. */
+  lockedCategory?: boolean;
+  /** Folder kerja tetap (dari Project) → sembunyikan field path. */
+  fixedProjectPath?: string;
+  /** Disalurkan ke request agar eksekusi menempel pada Run ini. */
+  taskRunId?: number;
+  /** Input lebar ala chat (lebih tinggi). */
+  wide?: boolean;
 }
 
 export function ComposePanel({
@@ -48,16 +52,21 @@ export function ComposePanel({
   setCategory,
   onRun,
   onCancel,
+  title = "Kirim tugas",
+  lockedCategory = false,
+  fixedProjectPath,
+  taskRunId,
+  wide = false,
 }: ComposeProps) {
   const [mode, setMode] = useState<TaskMode>("interaktif");
   const [projectPath, setProjectPath] = useState("");
   const [floor, setFloor] = useState("");
   const [noIsolation, setNoIsolation] = useState(false);
-  const [planOpen, setPlanOpen] = useState(false);
   const modals = useModals();
-  
+
   const [catsRes] = useApiResource(fetchCategories);
   const categories = catsRes.phase === "ready" ? catsRes.data : catsRes.phase === "error" ? [{ value: category, label: "gagal memuat" }] : [{ value: category, label: "memuat..." }];
+  const categoryLabel = categories.find((c) => c.value === category)?.label ?? category;
 
   const runDisabled = busy || prompt.trim().length === 0;
 
@@ -67,9 +76,10 @@ export function ComposePanel({
       prompt: prompt.trim(),
       category,
       mode,
-      projectPath,
+      projectPath: fixedProjectPath ?? projectPath,
       qualityFloor: floor || null,
       noIsolation,
+      taskRunId,
     });
   };
 
@@ -90,10 +100,10 @@ export function ComposePanel({
         borderBottom: "1px solid var(--line)",
       }}
     >
-      <Label>Kirim tugas</Label>
+      <Label>{title}</Label>
 
       <textarea
-        rows={5}
+        rows={wide ? 8 : 5}
         value={prompt}
         onChange={(e) => setPrompt(e.target.value)}
         onKeyDown={onPromptKey}
@@ -116,18 +126,24 @@ export function ComposePanel({
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--space-2)" }}>
         <Field label="Kategori">
-          <Select
-            size="sm"
-            style={{ width: "100%" }}
-            value={category}
-            onChange={(e) => setCategory(e.target.value as TaskCategory)}
-          >
-            {categories.map((c) => (
-              <option key={c.value} value={c.value}>
-                {c.label}
-              </option>
-            ))}
-          </Select>
+          {lockedCategory ? (
+            <div style={{ display: "flex", alignItems: "center", height: 30 }}>
+              <Badge tone="brand" mono>{categoryLabel}</Badge>
+            </div>
+          ) : (
+            <Select
+              size="sm"
+              style={{ width: "100%" }}
+              value={category}
+              onChange={(e) => setCategory(e.target.value as TaskCategory)}
+            >
+              {categories.map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.label}
+                </option>
+              ))}
+            </Select>
+          )}
         </Field>
         <Field label="Mode">
           <Select
@@ -142,28 +158,43 @@ export function ComposePanel({
         </Field>
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
-        <Label strong={false}>Project path</Label>
-        <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "center" }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <Input
-              mono
+      {fixedProjectPath === undefined ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-1)" }}>
+          <Label strong={false}>Project path</Label>
+          <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "center" }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <Input
+                mono
+                size="sm"
+                value={projectPath}
+                onChange={(e) => setProjectPath(e.target.value)}
+                placeholder="kosongkan = pakai default"
+                aria-label="project path"
+              />
+            </div>
+            <Button
+              variant="secondary"
               size="sm"
-              value={projectPath}
-              onChange={(e) => setProjectPath(e.target.value)}
-              placeholder="kosongkan = pakai default"
-              aria-label="project path"
-            />
+              onClick={() => modals.openBrowse(projectPath || "", setProjectPath)}
+            >
+              Browse…
+            </Button>
           </div>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => modals.openBrowse(projectPath || "", setProjectPath)}
-          >
-            Browse…
-          </Button>
         </div>
-      </div>
+      ) : (
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
+          <Label strong={false}>Folder</Label>
+          <span
+            style={{
+              fontFamily: "var(--font-mono)", fontSize: "var(--fs-12)", color: "var(--muted)",
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+            }}
+            title={fixedProjectPath}
+          >
+            {fixedProjectPath}
+          </span>
+        </div>
+      )}
 
       <div
         style={{
@@ -209,49 +240,6 @@ export function ComposePanel({
           }}
         >
           danger zone — agent menulis langsung ke working tree, tanpa worktree terisolasi.
-        </div>
-      )}
-
-      <button
-        type="button"
-        className="choros-hover-line"
-        onClick={() => setPlanOpen((v) => !v)}
-        aria-expanded={planOpen}
-        style={{
-          border: "1px solid var(--line)",
-          borderRadius: "var(--radius-sm)",
-          padding: "8px 10px",
-          fontFamily: "var(--font-mono)",
-          fontSize: "var(--fs-12)",
-          color: "var(--muted)",
-          background: "transparent",
-          cursor: "pointer",
-          textAlign: "left",
-          display: "flex",
-          alignItems: "center",
-          gap: "var(--space-2)",
-          transition: "color var(--dur) var(--ease), border-color var(--dur) var(--ease)",
-        }}
-      >
-        <Caret open={planOpen} /> artefak plan — titik-ulang saat fallback
-      </button>
-
-      {planOpen && (
-        <div
-          style={{
-            border: "1px solid var(--line)",
-            background: "var(--panel-2)",
-            borderRadius: "var(--radius-sm)",
-            padding: "8px 10px",
-            fontFamily: "var(--font-mono)",
-            fontSize: "var(--fs-12)",
-            color: "var(--muted)",
-            lineHeight: 1.6,
-          }}
-        >
-          {PLAN_STEPS.map((s) => (
-            <div key={s}>{s}</div>
-          ))}
         </div>
       )}
 

@@ -7,6 +7,7 @@ from app.api.tasks import router as tasks_router
 from app.api.users import router as users_router
 from app.api.workflows import router as workflows_router
 from app.api.fs import router as fs_router
+from app.api.projects import router as projects_router
 
 ROUTERS = [
     auth_router,
@@ -18,6 +19,7 @@ ROUTERS = [
     workflows_router,
     users_router,
     fs_router,
+    projects_router,
 ]
 
 __all__ = ["ROUTERS"]

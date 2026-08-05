@@ -322,6 +322,7 @@ export function createMockDaemon(sink: DaemonSink, opts: MockDaemonOptions): Dae
   };
 
   return {
+    attach() {},
     submit(request, _runId) {
       clear();
       ctx = { request, usage: { in: 0, out: 0, cache: 0, total: 0 } };

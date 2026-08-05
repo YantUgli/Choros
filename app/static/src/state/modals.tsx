@@ -7,18 +7,21 @@ import {
 import { DiffModal } from "../components/modals/DiffModal";
 import { ConfirmModal } from "../components/modals/ConfirmModal";
 import { BrowseModal } from "../components/modals/BrowseModal";
+import { DelegateModal } from "../components/modals/DelegateModal";
 
 type ModalRequest =
   | { type: "agent"; preset: AgentPreset; onSave: (draft: AgentDraft) => void }
   | { type: "diff"; runId: number; onMerge: () => void }
   | { type: "confirm"; title: string; body: string; onConfirm: () => void }
-  | { type: "browse"; initial: string; onPick: (path: string) => void };
+  | { type: "browse"; initial: string; onPick: (path: string) => void }
+  | { type: "delegate"; taskId: number; nextCategory: string; onDelegate: (artifact: string) => void };
 
 interface ModalApi {
   openAgent: (preset: AgentPreset, onSave: (draft: AgentDraft) => void) => void;
   openDiff: (runId: number, onMerge: () => void) => void;
   openConfirm: (opts: { title: string; body: string; onConfirm: () => void }) => void;
   openBrowse: (initial: string, onPick: (path: string) => void) => void;
+  openDelegate: (taskId: number, nextCategory: string, onDelegate: (artifact: string) => void) => void;
   close: () => void;
 }
 
@@ -40,6 +43,7 @@ export function ModalProvider({ children }: { children: ReactNode }) {
       openDiff: (runId, onMerge) => setModal({ type: "diff", runId, onMerge }),
       openConfirm: (opts) => setModal({ type: "confirm", ...opts }),
       openBrowse: (initial, onPick) => setModal({ type: "browse", initial, onPick }),
+      openDelegate: (taskId, nextCategory, onDelegate) => setModal({ type: "delegate", taskId, nextCategory, onDelegate }),
       close,
     }),
     [close],
@@ -84,6 +88,17 @@ export function ModalProvider({ children }: { children: ReactNode }) {
           initial={modal.initial}
           onPick={(p) => {
             modal.onPick(p);
+            close();
+          }}
+          onClose={close}
+        />
+      )}
+      {modal?.type === "delegate" && (
+        <DelegateModal
+          taskId={modal.taskId}
+          nextCategory={modal.nextCategory}
+          onDelegate={(artifact) => {
+            modal.onDelegate(artifact);
             close();
           }}
           onClose={close}

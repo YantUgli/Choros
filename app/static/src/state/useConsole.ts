@@ -57,8 +57,16 @@ export function useConsole() {
     if (req) daemonRef.current?.submit(req, stateRef.current.runId);
   }, []);
 
+  const attach = useCallback((taskId: number) => {
+    // ATTACH memindahkan mesin dari idle → queued lebih dulu, kalau tidak semua
+    // event stream yang di-replay akan diabaikan (idle hanya menerima SUBMIT).
+    dispatch({ type: "ATTACH", runId: taskId, ts: nowTs() });
+    daemonRef.current?.attach(taskId);
+  }, []);
+
   const actions = useMemo(
     () => ({
+      attach,
       submit,
       reply: (text: string) => daemonRef.current?.reply(text),
       followUp: (text: string) => daemonRef.current?.followUp(text),
@@ -72,7 +80,7 @@ export function useConsole() {
       scrollAway: () => dispatch({ type: "SCROLL_AWAY" }),
       jumpLatest: () => dispatch({ type: "JUMP_LATEST" }),
     }),
-    [submit, rerun],
+    [attach, submit, rerun],
   );
 
   return { state, actions, scenario, setScenario, isMock: USE_MOCK_DAEMON };

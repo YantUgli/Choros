@@ -71,13 +71,6 @@ export function ConsoleScreen({
   const live = selectedSession === null;
   const category = state.request?.category ?? "coding_complex";
 
-  const onExecutePlan = useCallback(() => {
-    if (state.result) {
-      setComposeCategory("coding_complex");
-      setComposePrompt(`[Referensi plan dari run #${state.runId}]\n${state.result.summary}\n\n---\n`);
-    }
-  }, [state.runId, state.result]);
-
   // ⌘↵ / Ctrl↵ dari mana pun di layar Console: submit ditangani ComposePanel;
   // Esc mengembalikan fokus ke stream (melepas kunci fokus balasan).
   useEffect(() => {
@@ -266,9 +259,9 @@ export function ConsoleScreen({
                     <>
                       <ResultStrip
                         result={state.result}
-                        category={category}
-                        onExecutePlan={onExecutePlan}
-                        onDiff={() => modals.openDiff(state.runId, actions.reset)}
+                        onDiff={() => {
+                          modals.openDiff(state.runId, actions.resume);
+                        }}
                         onMerge={async () => {
                           try {
                             await mergeDiff(state.runId);

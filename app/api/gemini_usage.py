@@ -18,6 +18,7 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/quota", tags=["quota"])
 
 QUOTA_URL = "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary"
+GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 
 
 def _platform_supported() -> bool:
@@ -37,6 +38,8 @@ _http_client: httpx.AsyncClient = httpx.AsyncClient(
 
 # Cache token di memory — hanya baca keyring lagi kalau token expired (401)
 _cached_token: str | None = None
+# Refresh credentials — di-populate saat pertama baca keyring
+_cached_refresh_creds: dict | None = None
 
 
 def _read_keyring_token_linux() -> str | None:
@@ -102,7 +105,7 @@ def _read_keyring_token_linux() -> str | None:
 
     try:
         data = json.loads(text.decode())
-        return data.get("token", {}).get("access_token")
+        return data.get("token") or None
     except (json.JSONDecodeError, AttributeError):
         return None
 
@@ -151,14 +154,14 @@ def _read_keyring_token_windows() -> str | None:
         c = cred_ptr.contents
         blob = ctypes.string_at(c.CredentialBlob, c.CredentialBlobSize)
         data = json.loads(blob.decode("utf-8"))
-        return data.get("token", {}).get("access_token")
+        return data.get("token") or None
     except (json.JSONDecodeError, UnicodeDecodeError, AttributeError):
         return None
     finally:
         advapi32.CredFree(cred_ptr)
 
 
-def _read_keyring_token() -> str | None:
+def _read_keyring_token() -> dict | None:
     if sys.platform == "win32":
         return _read_keyring_token_windows()
     return _read_keyring_token_linux()
@@ -166,13 +169,44 @@ def _read_keyring_token() -> str | None:
 
 async def _get_token() -> str | None:
     """Kembalikan token dari cache, atau baca dari keyring di thread pool."""
-    global _cached_token
+    global _cached_token, _cached_refresh_creds
     if _cached_token:
         return _cached_token
     loop = asyncio.get_event_loop()
-    token = await loop.run_in_executor(None, _read_keyring_token)
-    _cached_token = token
-    return token
+    token_data = await loop.run_in_executor(None, _read_keyring_token)
+    if not token_data:
+        return None
+    _cached_token = token_data.get("access_token")
+    log.warning("[gemini-keyring] keys in token: %s", list(token_data.keys()))
+    if token_data.get("refresh_token"):
+        _cached_refresh_creds = {
+            "refresh_token": token_data["refresh_token"],
+            "client_id": token_data.get("client_id", ""),
+            "client_secret": token_data.get("client_secret", ""),
+        }
+    return _cached_token
+
+
+async def _try_refresh() -> str | None:
+    """Tukar refresh_token jadi access_token baru. Return None kalau tidak bisa."""
+    if not _cached_refresh_creds or not _cached_refresh_creds.get("refresh_token"):
+        log.warning("[gemini-refresh] skip — refresh_token tidak ada di keyring")
+        return None
+    has_client_id = bool(_cached_refresh_creds.get("client_id"))
+    has_client_secret = bool(_cached_refresh_creds.get("client_secret"))
+    log.warning("[gemini-refresh] mencoba refresh | has_client_id=%s has_client_secret=%s", has_client_id, has_client_secret)
+    try:
+        resp = await _http_client.post(
+            GOOGLE_TOKEN_URL,
+            data=_cached_refresh_creds | {"grant_type": "refresh_token"},
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        log.warning("[gemini-refresh] status=%d body=%s", resp.status_code, resp.text[:200])
+        if resp.is_success:
+            return resp.json().get("access_token")
+    except Exception as exc:
+        log.warning("[gemini-refresh] exception: %s", exc)
+    return None
 
 
 def _transform(raw: dict) -> dict:
@@ -236,6 +270,20 @@ async def gemini_usage(_user: CurrentUser) -> dict:
 
     if resp.status_code == 401:
         _cached_token = None
+        new_token = await _try_refresh()
+        if new_token:
+            _cached_token = new_token
+            log.warning("[gemini-usage] token refreshed via refresh_token, retrying")
+            try:
+                resp = await _http_client.post(
+                    QUOTA_URL,
+                    headers={"Authorization": f"Bearer {new_token}"},
+                    json={},
+                )
+                if resp.is_success:
+                    return _transform(resp.json())
+            except Exception:
+                pass
         return {"error": "token_expired"}
     if not resp.is_success:
         return {"error": "api_error", "status": resp.status_code}

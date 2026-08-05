@@ -66,6 +66,7 @@ class TaskIn(BaseModel):
     quality_floor: str | None = None
     plan_artifact: str | None = None
     allow_unisolated: bool = False
+    task_run_id: int | None = None
 
 
 class TaskOut(BaseModel):
@@ -201,4 +202,59 @@ class WorkflowRunIn(BaseModel):
     project_path: str | None = None
     mode: str = "interactive"
     allow_unisolated: bool = False
+
+
+class ProjectIn(BaseModel):
+    name: str
+    folder_path: str
+
+class ProjectOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    name: str
+    folder_path: str
+    created_at: datetime | None
+
+class TaskGroupIn(BaseModel):
+    name: str
+    categories: list[str] = []
+
+class TaskGroupOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    project_id: int
+    name: str
+    categories: list[str]
+    created_at: datetime | None
+
+class TaskRunOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    task_group_id: int
+    status: str
+    created_at: datetime | None
+    finished_at: datetime | None
+
+class RunLaneOut(BaseModel):
+    category: str
+    task_id: int | None
+    status: str | None
+    tokens_run: int
+    tokens_accumulated: int
+
+class TaskRunDetailOut(TaskRunOut):
+    lanes: list[RunLaneOut]
+
+class DelegateIn(BaseModel):
+    to_category: str
+    artifact: str
+    mode: Literal["interactive", "autonomous"] = "interactive"
+
+class MdFileOut(BaseModel):
+    path: str
+    content: str
+
+class ArtifactCandidatesOut(BaseModel):
+    final_output: str | None
+    md_files: list[MdFileOut]
 

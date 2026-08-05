@@ -25,6 +25,8 @@ import {
 export type ConsoleEvent =
   /** user menekan Jalankan (⌘↵) */
   | { type: "SUBMIT"; request: RunRequest; runId: number; ts: string }
+  /** menyambung ke tugas yang sudah dibuat server (mis. hasil delegasi) — replay stream lalu ikuti */
+  | { type: "ATTACH"; runId: number; ts: string }
   /** daemon memberi slot; run mulai dieksekusi di `target` */
   | { type: "SLOT_FREE"; target: string; ts: string }
   /** satu baris stream biasa (thinking / tool_call / file_edit / output / info) */
@@ -79,6 +81,7 @@ export type ConsoleEventType = ConsoleEvent["type"];
 export const TRANSITIONS: Record<ConsoleStatus, Partial<Record<ConsoleEventType, ConsoleStatus>>> = {
   idle: {
     SUBMIT: "queued",
+    ATTACH: "queued",
   },
   queued: {
     SLOT_FREE: "running",
@@ -87,6 +90,9 @@ export const TRANSITIONS: Record<ConsoleStatus, Partial<Record<ConsoleEventType,
     TARGET_FAILED: "cascading",
     // …dan kalau SEMUA target dilewati, run berhenti tanpa pernah running.
     CHAIN_EXHAUSTED: "halted",
+    // Jaring pengaman untuk ATTACH/replay: kalau hasil final tiba tanpa sempat
+    // melewati `running` (mis. reconcile pada task yang sudah selesai), tetap sah.
+    FINAL: "done",
     CANCEL: "halted",
     FATAL: "error",
   },
@@ -195,6 +201,14 @@ export function consoleReducer(state: ConsoleState, event: ConsoleEvent): Consol
         stream: [
           line(event.ts, "status", "choros", `tugas diterima — antre di kategori ${event.request.category}`),
         ],
+      };
+
+    case "ATTACH":
+      return {
+        ...initialConsoleState,
+        status: next,
+        runId: event.runId,
+        stream: [line(event.ts, "status", "choros", "menyambung ke sesi yang sedang berjalan…")],
       };
 
     case "SLOT_FREE":

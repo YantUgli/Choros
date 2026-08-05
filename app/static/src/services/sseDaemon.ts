@@ -424,6 +424,10 @@ export function createSseDaemon(sink: DaemonSink, opts: SseDaemonOptions = {}): 
   };
 
   return {
+    attach(id: number) {
+      openStream(id);
+    },
+    
     submit(request) {
       questionPending = false;
       partialId = null;
@@ -438,6 +442,7 @@ export function createSseDaemon(sink: DaemonSink, opts: SseDaemonOptions = {}): 
             project_path: request.projectPath || null,
             quality_floor: request.qualityFloor,
             allow_unisolated: request.noIsolation,
+            task_run_id: request.taskRunId,
           }),
         }),
       )

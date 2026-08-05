@@ -11,9 +11,10 @@ import { UsersScreen } from "./features/config/UsersScreen";
 import { ModalProvider } from "./state/modals";
 import { useConsole } from "./state/useConsole";
 
-type View = "console" | "routing" | "quota" | "agents" | "workflows" | "users";
+type View = "projects" | "console" | "routing" | "quota" | "agents" | "workflows" | "users";
 
 const NAV_TABS: TabItem<View>[] = [
+  { value: "projects", label: "Projects" },
   { value: "console", label: "Console" },
   { value: "routing", label: "Routing" },
   { value: "quota", label: "Quota" },
@@ -58,8 +59,10 @@ function HealthIndicator() {
   return <StatusDot status={status} label={label} />;
 }
 
+import { ProjectsRoot } from "./features/projects/ProjectsRoot";
+
 export default function App() {
-  const [view, setView] = useState<View>("console");
+  const [view, setView] = useState<View>("projects");
   const { state, actions, scenario, setScenario, isMock } = useConsole();
 
   return (
@@ -105,6 +108,7 @@ export default function App() {
         </header>
 
         <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
+          {view === "projects" && <ProjectsRoot />}
           {view === "console" && (
             <ConsoleScreen
               state={state}

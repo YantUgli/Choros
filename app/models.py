@@ -122,6 +122,8 @@ class Task(Base):
     final_output: Mapped[str | None] = mapped_column(Text, nullable=True)
     workspace_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     allow_unisolated: Mapped[bool] = mapped_column(Boolean, default=False)
+    task_run_id: Mapped[int | None] = mapped_column(ForeignKey("task_runs.id"), nullable=True)
+    delegated_from_task_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     last_session_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     parent_task_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     resume_session_id: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -189,3 +191,35 @@ class QuotaWindow(Base):
     )
     tokens_used: Mapped[int] = mapped_column(Integer, default=0)
     is_exhausted: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class Project(Base):
+    __tablename__ = "projects"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    name: Mapped[str] = mapped_column(String(120))
+    folder_path: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class TaskGroup(Base):
+    __tablename__ = "task_groups"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    name: Mapped[str] = mapped_column(String(120))
+    categories: Mapped[list[Any]] = mapped_column(JSONB, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class TaskRun(Base):
+    __tablename__ = "task_runs"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    task_group_id: Mapped[int] = mapped_column(ForeignKey("task_groups.id"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    status: Mapped[str] = mapped_column(String(32), default="running")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
