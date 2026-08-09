@@ -116,6 +116,8 @@ export interface FailureInfo {
 export interface ConsoleState {
   status: ConsoleStatus;
   runId: number;
+  /** epoch ms saat run ini mulai (SUBMIT/ATTACH/FOLLOW_UP); null = belum jalan. Dasar "elapsed". */
+  startedAt: number | null;
   request: RunRequest | null;
   route: string;
   stream: StreamEvent[];

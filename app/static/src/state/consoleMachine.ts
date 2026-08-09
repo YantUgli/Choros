@@ -160,6 +160,7 @@ const EMPTY_USAGE: Usage = { in: 0, out: 0, cache: 0, total: 0 };
 export const initialConsoleState: ConsoleState = {
   status: "idle",
   runId: 38,
+  startedAt: null,
   request: null,
   route: "—",
   stream: [],
@@ -196,6 +197,7 @@ export function consoleReducer(state: ConsoleState, event: ConsoleEvent): Consol
         ...initialConsoleState,
         status: next,
         runId: event.runId,
+        startedAt: Date.now(),
         request: event.request,
         route: "—",
         stream: [
@@ -208,6 +210,7 @@ export function consoleReducer(state: ConsoleState, event: ConsoleEvent): Consol
         ...initialConsoleState,
         status: next,
         runId: event.runId,
+        startedAt: Date.now(),
         stream: [line(event.ts, "status", "choros", "menyambung ke sesi yang sedang berjalan…")],
       };
 
@@ -296,6 +299,8 @@ export function consoleReducer(state: ConsoleState, event: ConsoleEvent): Consol
       return {
         ...state,
         status: next,
+        // Follow-up = run baru di panel yang sama → elapsed dihitung ulang.
+        startedAt: Date.now(),
         // Strip Hasil run sebelumnya tidak boleh menggantung di atas run yang baru.
         result: null,
         question: null,

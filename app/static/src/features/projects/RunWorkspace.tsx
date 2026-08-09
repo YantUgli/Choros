@@ -126,10 +126,16 @@ export function RunWorkspace({
         <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
           {(lanes as RunLane[]).map((lane, i) => (
             <div key={lane.category}>
-              <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", padding: "var(--space-1) 0" }}>
-                <StatusDot status={laneDot(lane.status)} />
-                <span style={{ fontSize: "var(--fs-13)", flex: 1 }}>{lane.category}</span>
-                <Meta style={{ whiteSpace: "nowrap" }}>{lane.tokensAccumulated.toLocaleString()}</Meta>
+              <div style={{ padding: "var(--space-1) 0" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
+                  <StatusDot status={laneDot(lane.status)} />
+                  <span style={{ fontSize: "var(--fs-13)", flex: 1 }}>{lane.category}</span>
+                  <Meta style={{ whiteSpace: "nowrap" }}>Σ {lane.tokensAccumulated.toLocaleString()}</Meta>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: "var(--space-2)", paddingLeft: 16, marginTop: 2 }}>
+                  <Meta>{lane.status ?? "menunggu"}</Meta>
+                  {lane.tokensRun > 0 && <Meta>run {lane.tokensRun.toLocaleString()}</Meta>}
+                </div>
               </div>
               {i < lanes.length - 1 && (
                 <div style={{ paddingLeft: 3, color: "var(--muted)", fontSize: "var(--fs-12)", lineHeight: 1 }}>│</div>

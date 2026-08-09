@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useConsole } from "../../state/useConsole";
-import { Badge, Button, Card, IconButton, Select, StatusDot } from "../../components/ds";
+import { Badge, Button, Card, IconButton, MeterBar, Select, StatusDot } from "../../components/ds";
 import { Label, Meta } from "../../components/Label";
+import { useRegisterCommands, type Command } from "../../components/CommandPalette";
+import { fetchAgents } from "../../services/agentApi";
 import { StreamView } from "../console/StreamView";
 import { ComposePanel } from "../console/ComposePanel";
 import { CascadePanel } from "../console/CascadePanel";
@@ -10,6 +12,18 @@ import { Markdown } from "../../components/Markdown";
 import { useModals } from "../../state/modals";
 import { delegate, fetchLaneTasks, type LaneTask } from "../../services/projectApi";
 import { BUSY_STATUSES, TERMINAL_STATUSES, type TaskCategory } from "../../state/types";
+
+/** Durasi ringkas dari milidetik: `m ss` atau `Xj Ym`. */
+function fmtElapsed(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const m = Math.floor(s / 60);
+  const sec = s % 60;
+  if (m >= 60) {
+    const h = Math.floor(m / 60);
+    return `${h}j ${m % 60}m`;
+  }
+  return `${m}m ${String(sec).padStart(2, "0")}s`;
+}
 
 function dot(status: string) {
   if (status === "error") return "error" as const;
@@ -44,6 +58,8 @@ export function ConsolePanel({
   const [history, setHistory] = useState<LaneTask[]>([]);
   const [pickedId, setPickedId] = useState<number | null>(null);
   const [composePrompt, setComposePrompt] = useState("");
+  const [tokenLimit, setTokenLimit] = useState<number | null>(null);
+  const [now, setNow] = useState(() => Date.now());
 
   // Lane hasil delegasi dibuat di server → sambungkan stream tanpa submit.
   // Hanya untuk panel yang masih SEGAR (belum punya sesi sendiri): kalau panel ini
@@ -62,6 +78,37 @@ export function ConsolePanel({
   const currentTaskId = state.runId || laneTaskId;
   const showCompose = laneTaskId === null && state.status === "idle";
   const canDelegate = state.status === "done" && nextCategory !== null && !!currentTaskId;
+
+  // Elapsed hidup: tick per detik hanya selama run berjalan (hemat saat idle/terminal).
+  useEffect(() => {
+    if (!busy || !state.startedAt) return;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [busy, state.startedAt]);
+
+  // Batas token agent aktif (bahan meter) — dicocokkan dari route yang teresolusi.
+  useEffect(() => {
+    let active = true;
+    fetchAgents()
+      .then((ags) => {
+        if (!active) return;
+        const r = state.route;
+        const m = ags.find(
+          (a) => (a.default_model && r.includes(a.default_model)) || (a.name && r.includes(a.name)),
+        );
+        setTokenLimit(m?.token_limit ?? null);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [state.route]);
+
+  // Sumber "elapsed": live saat berjalan; durasi final saat sudah selesai.
+  const elapsedMs = busy && state.startedAt ? now - state.startedAt : null;
+  const elapsedText = elapsedMs !== null ? fmtElapsed(elapsedMs) : state.result?.duration ?? null;
+  const model = state.route && state.route !== "—" ? state.route : null;
+  const showMeta = !showCompose && (model !== null || state.usage.total > 0 || state.startedAt !== null);
 
   // Muat riwayat hasil lane saat selesai → bahan picker.
   useEffect(() => {
@@ -85,6 +132,33 @@ export function ConsolePanel({
     });
   };
 
+  // Perintah lane untuk command palette (⌘K) — didaftar ulang saat state relevan berubah.
+  const laneCommands: Command[] = [
+    {
+      id: `lane:${runId}:${category}:min`,
+      group: "Lane",
+      label: minimized ? `Buka lane ${category}` : `Ciutkan lane ${category}`,
+      run: () => setMinimized((m) => !m),
+    },
+  ];
+  if (!showCompose) {
+    laneCommands.push({
+      id: `lane:${runId}:${category}:view`,
+      group: "Lane",
+      label: `Lane ${category}: tampilkan ${view === "result" ? "stream" : "hasil"}`,
+      run: () => setView((v) => (v === "result" ? "stream" : "result")),
+    });
+  }
+  if (canDelegate && nextCategory) {
+    laneCommands.push({
+      id: `lane:${runId}:${category}:delegate`,
+      group: "Lane",
+      label: `Delegasikan ${category} → ${nextCategory}`,
+      run: openDelegate,
+    });
+  }
+  useRegisterCommands(laneCommands, [runId, category, minimized, view, showCompose, canDelegate, nextCategory]);
+
   // ── Minimized: chip status + token (run + akumulasi) + ringkas hasil ──
   if (minimized) {
     return (
@@ -93,6 +167,7 @@ export function ConsolePanel({
         <Badge tone="brand" mono>{category}</Badge>
         <Meta style={{ whiteSpace: "nowrap" }}>
           {state.usage.total.toLocaleString()} tok · Σ {tokensAccumulated.toLocaleString()}
+          {elapsedText ? ` · ⏱ ${elapsedText}` : ""}
         </Meta>
         <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: "var(--fs-13)", color: "var(--muted)" }}>
           {state.result?.summary?.split("\n")[0] || (busy ? "berjalan…" : "—")}
@@ -119,6 +194,30 @@ export function ConsolePanel({
         {busy && <Button variant="danger" size="sm" onClick={actions.cancel}>Batal</Button>}
         <IconButton title="Ciutkan" onClick={() => setMinimized(true)}>—</IconButton>
       </div>
+
+      {/* Metrik lane — elapsed hidup + meter token (sumber jujur, bukan progress %) */}
+      {showMeta && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "var(--space-3)",
+            padding: "var(--space-1) var(--space-3) var(--space-2)",
+            borderBottom: "1px solid var(--line)",
+            background: "var(--panel-2)",
+            flex: "none",
+          }}
+        >
+          {elapsedText && <Meta style={{ whiteSpace: "nowrap" }}>⏱ {elapsedText}</Meta>}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            {tokenLimit ? (
+              <MeterBar value={state.usage.total} max={tokenLimit} unit="tok" height={5} />
+            ) : (
+              <Meta>{state.usage.total.toLocaleString()} tok</Meta>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Body */}
       <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>

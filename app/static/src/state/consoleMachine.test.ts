@@ -294,6 +294,27 @@ describe("reducer — perilaku per state", () => {
   });
 });
 
+describe("startedAt (dasar elapsed)", () => {
+  it("null di initial, terisi epoch saat SUBMIT & ATTACH", () => {
+    expect(initialConsoleState.startedAt).toBeNull();
+    const s1 = consoleReducer(initialConsoleState, submit);
+    expect(typeof s1.startedAt).toBe("number");
+    expect(s1.startedAt).toBeGreaterThan(0);
+    const s2 = consoleReducer(initialConsoleState, { type: "ATTACH", runId: 7, ts: "14:02:10" });
+    expect(typeof s2.startedAt).toBe("number");
+  });
+
+  it("kembali null setelah RESET dari state terminal", () => {
+    const done = run(running(), {
+      type: "FINAL",
+      result: { summary: "ok", worktree: "w", isolated: true, filesChanged: 0, added: 0, removed: 0, tokens: 0, duration: "1s" },
+      events: [ev("status", "done")],
+    });
+    expect(done.startedAt).not.toBeNull();
+    expect(consoleReducer(done, { type: "RESET" }).startedAt).toBeNull();
+  });
+});
+
 describe("FOLLOW_UP", () => {
   const finished = run(running(), {
     type: "FINAL",

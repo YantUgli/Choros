@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Project, TaskGroup } from "../../services/projectApi";
 import { Button } from "../../components/ds";
 import { Meta } from "../../components/Label";
+import { useRegisterCommands, type Command } from "../../components/CommandPalette";
 import { ProjectsScreen } from "./ProjectsScreen";
 import { TaskListScreen } from "./TaskListScreen";
 import { RunWorkspace } from "./RunWorkspace";
@@ -13,6 +14,24 @@ export type Nav =
 
 export function ProjectsRoot() {
   const [nav, setNav] = useState<Nav>({ screen: "projects" });
+
+  // Lompatan breadcrumb lewat command palette — cerminan tombol di bar navigasi.
+  const navCommands: Command[] = [];
+  if (nav.screen !== "projects") {
+    navCommands.push({
+      id: "proj:list",
+      group: "Navigasi",
+      label: "Kembali ke daftar Projects",
+      run: () => setNav({ screen: "projects" }),
+    });
+    navCommands.push({
+      id: "proj:tasks",
+      group: "Navigasi",
+      label: `Buka Task — ${nav.project.name}`,
+      run: () => setNav({ screen: "tasks", project: nav.project }),
+    });
+  }
+  useRegisterCommands(navCommands, [nav]);
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>

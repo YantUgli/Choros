@@ -96,6 +96,7 @@ export function TranscriptView({ taskId }: { taskId: number }) {
   const mockState: ConsoleState = {
     status: "done",
     runId: taskId,
+    startedAt: null,
     stream: data.stream,
     attempts: data.attempts,
     request: null,

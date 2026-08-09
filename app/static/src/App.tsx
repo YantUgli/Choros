@@ -10,6 +10,7 @@ import { WorkflowsScreen } from "./features/config/WorkflowsScreen";
 import { UsersScreen } from "./features/config/UsersScreen";
 import { ModalProvider } from "./state/modals";
 import { useConsole } from "./state/useConsole";
+import { CommandProvider, useCommandPalette, useRegisterCommands } from "./components/CommandPalette";
 
 type View = "projects" | "console" | "routing" | "quota" | "agents" | "workflows" | "users";
 
@@ -61,12 +62,60 @@ function HealthIndicator() {
 
 import { ProjectsRoot } from "./features/projects/ProjectsRoot";
 
+/** Chip ⌘K di header — pintu masuk command palette selain shortcut keyboard. */
+function CommandHint() {
+  const palette = useCommandPalette();
+  return (
+    <button
+      type="button"
+      onClick={() => palette?.open()}
+      title="Command palette (⌘K)"
+      aria-label="Buka command palette"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        background: "var(--panel-2)",
+        border: "1px solid var(--line)",
+        borderRadius: "var(--radius-sm)",
+        color: "var(--muted)",
+        cursor: "pointer",
+        padding: "3px 8px",
+        fontFamily: "var(--font-mono)",
+        fontSize: "var(--fs-12)",
+      }}
+    >
+      ⌘K
+    </button>
+  );
+}
+
 export default function App() {
+  return (
+    <ModalProvider>
+      <CommandProvider>
+        <AppShell />
+      </CommandProvider>
+    </ModalProvider>
+  );
+}
+
+function AppShell() {
   const [view, setView] = useState<View>("projects");
   const { state, actions, scenario, setScenario, isMock } = useConsole();
 
+  useRegisterCommands(
+    NAV_TABS.map((t) => ({
+      id: `nav:${t.value}`,
+      group: "Navigasi",
+      label: `Buka ${t.label}`,
+      run: () => setView(t.value),
+    })),
+    [],
+  );
+
   return (
-    <ModalProvider>
+    <>
       <div
         style={{
           height: "100vh",
@@ -102,6 +151,7 @@ export default function App() {
               flex: "none",
             }}
           >
+            <CommandHint />
             <HealthIndicator />
             <Meta>mode lokal terbuka</Meta>
           </div>
@@ -126,6 +176,6 @@ export default function App() {
           {view === "users" && <UsersScreen />}
         </div>
       </div>
-    </ModalProvider>
+    </>
   );
 }
