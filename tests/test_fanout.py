@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 
 from app.db import SessionLocal
 from app.main import app
