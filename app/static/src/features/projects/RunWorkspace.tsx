@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { type Project, fetchRunDetail, type RunLane, type TaskRunDetail } from "../../services/projectApi";
+import { type Project, fetchRunDetail, selectWinner, type RunLane, type TaskRunDetail } from "../../services/projectApi";
 import { Badge, Card, IconButton, StatusDot } from "../../components/ds";
 import { Label, Meta } from "../../components/Label";
 import { ConsolePanel } from "./ConsolePanel";
@@ -87,6 +87,30 @@ export function RunWorkspace({
         >
           {(lanes as RunLane[]).map((lane, i) => {
             const nextCategory = lanes[i + 1]?.category ?? null;
+
+            // Fan-out belum diputuskan → cabang-cabang berdampingan + tombol pilih pemenang.
+            if (lane.branches && lane.branches.length >= 2) {
+              return (
+                <div key={lane.category} style={{ width: 960, minWidth: 900, flex: "1 0 900px", display: "flex", gap: "var(--space-3)", minHeight: 0 }}>
+                  {lane.branches.map((b) => (
+                    <div key={b.taskId} style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", minHeight: 0 }}>
+                      <ConsolePanel
+                        runId={runId}
+                        category={lane.category}
+                        laneTaskId={b.taskId}
+                        folderPath={project.folderPath}
+                        onDelegated={reload}
+                        nextCategory={nextCategory}
+                        tokensAccumulated={b.tokensRun}
+                        fanoutAgent={b.agent}
+                        onSelectWinner={() => { selectWinner(b.taskId).then(reload).catch(() => {}); }}
+                      />
+                    </div>
+                  ))}
+                </div>
+              );
+            }
+
             const isActive = i === 0 || lane.taskId !== null;
 
             return (
@@ -133,7 +157,7 @@ export function RunWorkspace({
                   <Meta style={{ whiteSpace: "nowrap" }}>Σ {lane.tokensAccumulated.toLocaleString()}</Meta>
                 </div>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: "var(--space-2)", paddingLeft: 16, marginTop: 2 }}>
-                  <Meta>{lane.status ?? "menunggu"}</Meta>
+                  <Meta>{lane.branches ? `fan-out (${lane.branches.length})` : lane.status ?? "menunggu"}</Meta>
                   {lane.tokensRun > 0 && <Meta>run {lane.tokensRun.toLocaleString()}</Meta>}
                 </div>
               </div>

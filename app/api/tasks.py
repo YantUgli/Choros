@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -18,8 +19,8 @@ from app.orchestrator.isolation import (
 from app.orchestrator.router import CATEGORIES, CATEGORY_LABELS, classify
 from app.orchestrator.runner import load_task_events, runner
 from app.schemas import (
-    ArtifactCandidatesOut, DelegateIn, FollowUpIn, 
-    MdFileOut, TaskIn, TaskLogOut, TaskOut
+    ArtifactCandidatesOut, DelegateIn, FollowUpIn,
+    MdFileOut, SelectWinnerIn, TaskIn, TaskLogOut, TaskOut
 )
 from app.security import CurrentUser, DbSession
 import os
@@ -306,3 +307,61 @@ async def delegate_task(task_id: int, payload: DelegateIn, user: CurrentUser, se
     await session.refresh(task)
     runner.start(task.id)
     return task
+
+
+@router.post("/{task_id}/select-winner", response_model=TaskOut)
+async def select_winner(
+    task_id: int, payload: SelectWinnerIn, user: CurrentUser, session: DbSession
+) -> Task:
+    """Pilih cabang pemenang dari sebuah fan-out (Item C).
+
+    Cabang lain dalam grup dibatalkan (kalau masih jalan) dan worktree-nya dibuang —
+    tanpa ini, cabang yang kalah menumpuk sampai gc 7 hari. Bila `to_category` diisi,
+    artifact pemenang langsung didelegasikan ke lane berikutnya (mekanik `delegate`).
+    """
+    winner = await _owned_task(task_id, user, session)
+    if winner.fanout_group_id is None:
+        raise HTTPException(status_code=400, detail="task ini bukan bagian dari fan-out")
+
+    losers = (
+        await session.execute(
+            select(Task).where(
+                Task.fanout_group_id == winner.fanout_group_id,
+                Task.id != winner.id,
+                Task.user_id == user.id,
+            )
+        )
+    ).scalars().all()
+
+    for loser in losers:
+        await runner.cancel(loser.id)  # no-op kalau sudah selesai
+        if loser.mode == "autonomous" and loser.project_path and loser.workspace_path:
+            await discard_workspace_branch(loser.project_path, loser.id, loser.workspace_path)
+        loser.status = "discarded"
+        loser.finished_at = datetime.now(UTC)
+    await session.commit()
+
+    # Opsional: delegasikan artifact pemenang ke lane berikutnya.
+    if payload.to_category:
+        if not payload.artifact:
+            raise HTTPException(status_code=400, detail="artifact wajib bila to_category diisi")
+        delegated = Task(
+            user_id=user.id,
+            prompt=_delegate_prompt(payload.artifact),
+            category=payload.to_category,
+            mode=payload.mode,
+            project_path=winner.project_path,
+            quality_floor=winner.quality_floor,
+            plan_artifact=payload.artifact,
+            allow_unisolated=winner.allow_unisolated,
+            task_run_id=winner.task_run_id,
+            delegated_from_task_id=winner.id,
+            status="queued",
+        )
+        session.add(delegated)
+        await session.commit()
+        await session.refresh(delegated)
+        runner.start(delegated.id)
+
+    await session.refresh(winner)
+    return winner

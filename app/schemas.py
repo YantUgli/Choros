@@ -82,6 +82,7 @@ class TaskOut(BaseModel):
     final_output: str | None
     workflow_run_id: int | None = None
     step_order: int | None = None
+    fanout_group_id: int | None = None
     created_at: datetime | None
     finished_at: datetime | None
 
@@ -235,12 +236,21 @@ class TaskRunOut(BaseModel):
     created_at: datetime | None
     finished_at: datetime | None
 
+class RunLaneBranchOut(BaseModel):
+    """Satu cabang dari fan-out yang belum diputuskan (Item C)."""
+    task_id: int
+    status: str | None
+    tokens_run: int
+    agent: str | None = None
+
 class RunLaneOut(BaseModel):
     category: str
     task_id: int | None
     status: str | None
     tokens_run: int
     tokens_accumulated: int
+    # Terisi hanya saat lane berupa fan-out yang belum dipilih pemenangnya.
+    branches: list[RunLaneBranchOut] | None = None
 
 class TaskRunDetailOut(TaskRunOut):
     lanes: list[RunLaneOut]
@@ -248,6 +258,30 @@ class TaskRunDetailOut(TaskRunOut):
 class DelegateIn(BaseModel):
     to_category: str
     artifact: str
+    mode: Literal["interactive", "autonomous"] = "interactive"
+
+class FanoutIn(BaseModel):
+    """Jalankan satu lane di 2 agent serentak lalu bandingkan (Item C).
+
+    Fan-out dibatasi 2 cabang & selalu autonomous (worktree terisolasi per cabang),
+    jadi tak ada opsi mode di sini — sengaja.
+    """
+
+    prompt: str
+    agent_ids: list[int]  # tepat 2 agent berbeda, satu per cabang
+    quality_floor: str | None = None
+    allow_unisolated: bool = False
+    force: bool = False  # lewati preflight kuota (fan-out membakar kuota 2×)
+
+class SelectWinnerIn(BaseModel):
+    """Pilih cabang pemenang dari sebuah fan-out (Item C).
+
+    Cabang lain dalam grup dibatalkan & worktree-nya dibuang. Bila `to_category`
+    diisi, artifact pemenang langsung didelegasikan ke lane berikutnya.
+    """
+
+    to_category: str | None = None
+    artifact: str | None = None
     mode: Literal["interactive", "autonomous"] = "interactive"
 
 class MdFileOut(BaseModel):

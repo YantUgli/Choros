@@ -124,6 +124,8 @@ class Task(Base):
     allow_unisolated: Mapped[bool] = mapped_column(Boolean, default=False)
     task_run_id: Mapped[int | None] = mapped_column(ForeignKey("task_runs.id"), nullable=True)
     delegated_from_task_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # Cabang satu fan-out berbagi nilai ini (= id task jangkar). NULL = task biasa.
+    fanout_group_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     last_session_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     parent_task_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     resume_session_id: Mapped[str | None] = mapped_column(Text, nullable=True)

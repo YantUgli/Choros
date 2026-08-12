@@ -145,32 +145,92 @@ rail Pipeline ikut kaya; nol warna hardcode (aturan `styles/tokens/colors.css`);
 ## Item C — Fan-out per-lane (paralel + pilih pemenang) — epik
 
 **Tujuan:** menerjemahkan paradigma **paralel** Orca ke pipeline sekuensial: jalankan
-**satu lane** (mis. `coding_complex`) di **N agent serentak**, bandingkan hasil, **pilih
-pemenang** untuk didelegasikan ke lane berikutnya. Bukan tweak — fitur baru.
+**satu lane** di **N agent serentak**, bandingkan hasil, **pilih pemenang** untuk
+didelegasikan ke lane berikutnya. Bukan tweak — fitur baru.
 
 **Kenapa sekarang lebih murah:** multi-instance `useConsole` sudah terbukti jalan
 (satu per panel). Fan-out = merender **N `ConsolePanel` untuk kategori yang sama** dalam
-satu lane, bukan refactor state inti.
+satu lane, bukan refactor state inti. Dan isolasi worktree **sudah ada**
+([`isolation.py`](../app/orchestrator/isolation.py)): `prepare_workspace` (worktree +
+branch `choros/task-{id}`), `merge_workspace_branch`, `discard_workspace_branch` = persis
+mekanik "merge pemenang, buang yang kalah".
 
-**Spike backend dulu:**
-- Endpoint fan-out: satu prompt → N `tasks` konkuren dalam `(task_run_id, category)` yang sama,
-  masing-masing agent berbeda. Runner sekarang cascade sekuensial — lihat `app/orchestrator/`,
-  `app/api/tasks.py`.
-- **Folder live = bahaya tabrakan.** README console-rework §6 sudah menandai: banyak lane
-  menulis folder sama berisiko. Fan-out **wajib worktree terisolasi per cabang** (escape-hatch
-  isolasi yang disebut sebagai v2) — ini prasyarat, bukan opsional.
-- Kuota: N run paralel membakar kuota N× — perlu guard.
+### Keputusan yang diambil (baca dulu)
 
-**Frontend (setelah spike hijau):**
-- Lane bisa berisi **grup N panel** (tab/grid mini) alih-alih satu.
-- Aksi **"pilih pemenang"** → `delegate(winnerTaskId, nextCategory, artifact)` (mekanisme
-  `delegate` sudah ada di [`projectApi.ts`](../app/static/src/services/projectApi.ts)),
-  cabang lain di-discard.
+> **Fan-out = SELALU autonomous + worktree. Mulai dari `text_planning`.**
+> Bandingkan N plan → pilih 1 → delegate artifact-nya ke lane berikut, discard sisanya.
+> Merge worktree pemenang ditunda ke fase kategori-coding (fase 2).
 
-**Selesai (target epik):** dari satu lane, fan-out ≥2 agent; keduanya live berdampingan;
-user pilih satu → jadi artefak delegasi ke lane berikut, sisanya dibuang.
+Alasan planning-first (bukan sekadar "lebih gampang"):
+- **Menghindari bagian terberat.** Membandingkan N *plan* = membandingkan teks/markdown,
+  bukan me-*merge* filesystem. Pemenang cukup diteruskan lewat `delegate` yang sudah ada;
+  yang kalah cukup dibuang. `merge_workspace_branch` + resolusi konflik git **tidak** disentuh
+  di langkah pertama.
+- **Planning itu `BRAIN_ONLY`** ([`runner.py:43`](../app/orchestrator/runner.py)) — bisa jalan
+  di model mentah tanpa "tangan", jadi fan-out planning bisa diarahkan ke model murni-teks
+  yang nyaris tak menyentuh folder → risiko tabrakan mendekati nol.
+- **Di hulu-lah "bandingkan lalu pilih" paling bernilai** (lihat beberapa *pendekatan*
+  sebelum berkomitmen), sekaligus lane termurah untuk menguji guard kuota N×.
 
-**Risiko:** tinggi (backend + isolasi worktree + biaya kuota). Keputusan produk, bukan sekadar teknis.
+Kenapa "selalu autonomous", bukan "planning boleh interaktif": aturan tunggal
+("fan-out ⇒ worktree, titik") jauh lebih sulit bocor daripada cabang logika
+"planning interaktif / coding worktree".
+
+### Temuan backend terverifikasi (yang mengubah bobot risiko)
+
+1. **Backend hanya kenal "satu task terakhir per lane".**
+   [`get_run`](../app/api/projects.py) memilih `order_by(desc(Task.id)).limit(1)` per kategori,
+   dan `tokens_accumulated` men-*sum* SEMUA task di kategori itu. N task konkuren di kategori
+   sama → UI cuma lihat yang id terbesar, dan metrik N cabang tercampur jadi satu angka ngawur.
+   Perlu konsep eksplisit **grup fan-out** (mis. kolom `fanout_group_id` di `Task`), bukan
+   menjejalkan banyak task ke `(run, category)` yang sama.
+
+2. **Delegate memaksa `mode: "interactive"`.**
+   [`delegate_task`](../app/api/tasks.py) dan `delegate()` di
+   [`projectApi.ts`](../app/static/src/services/projectApi.ts) hardcode interactive, dan
+   [`prepare_workspace`](../app/orchestrator/isolation.py) hanya mengisolasi kalau
+   `mode == "autonomous"`. Jadi fan-out **wajib** jalur autonomous, kalau tidak N cabang menulis
+   folder live yang sama secara bersamaan → saling menimpa.
+
+3. **Cap konkurensi = global & kecil (default 3).**
+   [`runner.py`](../app/orchestrator/runner.py) `asyncio.Semaphore(max_concurrent_tasks)`,
+   [`config.py`](../app/config.py) default **3**, **global untuk seluruh proses**. Fan-out
+   tidak akan crash (kelebihan mengantre), TAPI fan-out 3 cabang memakan habis cap → semua
+   lane/user lain ikut antre; "N live berdampingan" jadi bohong. **Blocker lintas-fase:** cap
+   harus dinaikkan / dibuat per-run, atau fan-out dibatasi 2 cabang.
+
+4. **Guard kuota hanya reaktif, tanpa preflight.**
+   [`runner.py`](../app/orchestrator/runner.py) cek `is_exhausted` per-target *setelah* fakta;
+   tak ada admission control "run ini fan-out ke N agen, biaya N×". Etos "kuota tidak ditebak"
+   menuntut preflight eksplisit.
+
+### Jalur eksekusi (bertahap, spike dulu — bukan satu PR besar)
+
+| Fase | Isi | Sifat |
+|---|---|---|
+| C-spike | Putuskan cap konkurensi (naikkan / per-run / batasi 2). Konfirmasi target planning brain-only murni-teks. | riset, ~0 kode |
+| C1 | Model data: `fanout_group_id` di `Task`; `get_run` + lane API sadar grup (bukan "latest"). | backend |
+| C2 | Endpoint fan-out (autonomous paksa) + aksi pilih-pemenang: delegate artifact pemenang, discard cabang lain. | backend, reuse `isolation.py` |
+| C3 | Guard kuota N× (preflight sebelum submit). | backend |
+| C4 | Frontend: lane jadi grid/tab N `ConsolePanel`; aksi "pilih pemenang". Reuse [`list_lane_tasks`](../app/api/projects.py). | frontend |
+| C5 (fase 2) | Perluas ke kategori coding: `merge_workspace_branch` pemenang + resolusi konflik. | backend, epik lanjutan |
+
+**Selesai (target fase 1):** dari lane `text_planning`, fan-out 2 agent; keduanya live
+berdampingan; user pilih satu → jadi artefak delegasi ke lane berikut, sisanya dibuang.
+
+> **Status — sudah dieksekusi di `feat/cockpit-ux`.** Keputusan yang dibakukan: fan-out **2
+> cabang** (muat di cap konkurensi global 3, tanpa infra baru), **selalu autonomous** (worktree
+> per cabang). Backend: kolom `fanout_group_id`; `POST …/lanes/{cat}/fanout` (preflight kuota 2×,
+> pre-check repo git); `POST /tasks/{id}/select-winner` (buang cabang kalah + opsi delegasi);
+> `get_run` fan-out-aware. Frontend: `FanoutModal` (picker 2 agent), render 2 panel berdampingan,
+> tombol "Pilih pemenang". 6 test di `tests/test_fanout.py` (belum dijalankan — Postgres test lokal
+> mati). **Sisa:** race kosmetik status `discarded` vs `cancelled` bila cabang kalah masih jalan;
+> merge worktree pemenang untuk kategori-coding (C5) belum — sekarang pemenang meneruskan artifact
+> teks, bukan mem-*merge* filesystem.
+
+**Risiko:** tinggi (model data + isolasi + biaya kuota + cap konkurensi). Keputusan produk,
+bukan sekadar teknis — tapi fondasinya (worktree, cap-aware runner, endpoint riwayat lane)
+sudah ada, jadi ini merangkai yang ada, bukan membangun dari nol.
 
 ---
 

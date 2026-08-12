@@ -8,13 +8,15 @@ import { DiffModal } from "../components/modals/DiffModal";
 import { ConfirmModal } from "../components/modals/ConfirmModal";
 import { BrowseModal } from "../components/modals/BrowseModal";
 import { DelegateModal } from "../components/modals/DelegateModal";
+import { FanoutModal } from "../components/modals/FanoutModal";
 
 type ModalRequest =
   | { type: "agent"; preset: AgentPreset; onSave: (draft: AgentDraft) => void }
   | { type: "diff"; runId: number; onMerge: () => void }
   | { type: "confirm"; title: string; body: string; onConfirm: () => void }
   | { type: "browse"; initial: string; onPick: (path: string) => void }
-  | { type: "delegate"; taskId: number; nextCategory: string; onDelegate: (artifact: string) => void };
+  | { type: "delegate"; taskId: number; nextCategory: string; onDelegate: (artifact: string) => void }
+  | { type: "fanout"; category: string; initialPrompt: string; onStart: (agentIds: number[], prompt: string, allowUnisolated: boolean) => void };
 
 interface ModalApi {
   openAgent: (preset: AgentPreset, onSave: (draft: AgentDraft) => void) => void;
@@ -22,6 +24,7 @@ interface ModalApi {
   openConfirm: (opts: { title: string; body: string; onConfirm: () => void }) => void;
   openBrowse: (initial: string, onPick: (path: string) => void) => void;
   openDelegate: (taskId: number, nextCategory: string, onDelegate: (artifact: string) => void) => void;
+  openFanout: (category: string, initialPrompt: string, onStart: (agentIds: number[], prompt: string, allowUnisolated: boolean) => void) => void;
   close: () => void;
 }
 
@@ -44,6 +47,7 @@ export function ModalProvider({ children }: { children: ReactNode }) {
       openConfirm: (opts) => setModal({ type: "confirm", ...opts }),
       openBrowse: (initial, onPick) => setModal({ type: "browse", initial, onPick }),
       openDelegate: (taskId, nextCategory, onDelegate) => setModal({ type: "delegate", taskId, nextCategory, onDelegate }),
+      openFanout: (category, initialPrompt, onStart) => setModal({ type: "fanout", category, initialPrompt, onStart }),
       close,
     }),
     [close],
@@ -99,6 +103,17 @@ export function ModalProvider({ children }: { children: ReactNode }) {
           nextCategory={modal.nextCategory}
           onDelegate={(artifact) => {
             modal.onDelegate(artifact);
+            close();
+          }}
+          onClose={close}
+        />
+      )}
+      {modal?.type === "fanout" && (
+        <FanoutModal
+          category={modal.category}
+          initialPrompt={modal.initialPrompt}
+          onStart={(agentIds, prompt, allowUnisolated) => {
+            modal.onStart(agentIds, prompt, allowUnisolated);
             close();
           }}
           onClose={close}

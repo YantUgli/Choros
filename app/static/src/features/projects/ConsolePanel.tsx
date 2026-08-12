@@ -10,7 +10,7 @@ import { CascadePanel } from "../console/CascadePanel";
 import { FollowUpStrip } from "../console/FollowUpStrip";
 import { Markdown } from "../../components/Markdown";
 import { useModals } from "../../state/modals";
-import { delegate, fetchLaneTasks, type LaneTask } from "../../services/projectApi";
+import { delegate, fanoutLane, fetchLaneTasks, type LaneTask } from "../../services/projectApi";
 import { BUSY_STATUSES, TERMINAL_STATUSES, type TaskCategory } from "../../state/types";
 
 /** Durasi ringkas dari milidetik: `m ss` atau `Xj Ym`. */
@@ -42,6 +42,8 @@ export function ConsolePanel({
   onDelegated,
   nextCategory,
   tokensAccumulated,
+  fanoutAgent = null,
+  onSelectWinner,
 }: {
   runId: number;
   category: string;
@@ -50,6 +52,10 @@ export function ConsolePanel({
   onDelegated: () => void;
   nextCategory: string | null;
   tokensAccumulated: number;
+  /** Nama agent cabang ini bila panel bagian dari fan-out (Item C). */
+  fanoutAgent?: string | null;
+  /** Bila diisi, panel ini cabang fan-out → tampilkan aksi "pilih pemenang". */
+  onSelectWinner?: () => void;
 }) {
   const { state, actions } = useConsole();
   const modals = useModals();
@@ -132,6 +138,25 @@ export function ConsolePanel({
     });
   };
 
+  // Mulai fan-out (Item C): lane ini di 2 agent serentak. 409 = kuota mentok → tawari force.
+  const openFanout = () => {
+    modals.openFanout(category, composePrompt, (agentIds, prompt, allowUnisolated) => {
+      const run = (force: boolean) =>
+        fanoutLane(runId, category, prompt, agentIds, { allowUnisolated, force }).then(onDelegated);
+      run(false).catch((err: any) => {
+        if (err?.status === 409) {
+          modals.openConfirm({
+            title: "Kuota mentok",
+            body: "Agent terpilih kuotanya mentok. Fan-out membakar kuota 2×. Tetap lanjut?",
+            onConfirm: () => { run(true).catch(() => {}); },
+          });
+        } else {
+          modals.openConfirm({ title: "Gagal fan-out", body: String(err?.message ?? err), onConfirm: () => {} });
+        }
+      });
+    });
+  };
+
   // Perintah lane untuk command palette (⌘K) — didaftar ulang saat state relevan berubah.
   const laneCommands: Command[] = [
     {
@@ -149,7 +174,15 @@ export function ConsolePanel({
       run: () => setView((v) => (v === "result" ? "stream" : "result")),
     });
   }
-  if (canDelegate && nextCategory) {
+  if (showCompose) {
+    laneCommands.push({
+      id: `lane:${runId}:${category}:fanout`,
+      group: "Lane",
+      label: `Fan-out lane ${category} (2 agent)`,
+      run: openFanout,
+    });
+  }
+  if (canDelegate && nextCategory && !onSelectWinner) {
     laneCommands.push({
       id: `lane:${runId}:${category}:delegate`,
       group: "Lane",
@@ -157,7 +190,15 @@ export function ConsolePanel({
       run: openDelegate,
     });
   }
-  useRegisterCommands(laneCommands, [runId, category, minimized, view, showCompose, canDelegate, nextCategory]);
+  if (onSelectWinner) {
+    laneCommands.push({
+      id: `lane:${runId}:${category}:winner:${laneTaskId}`,
+      group: "Lane",
+      label: `Pilih pemenang: ${category}${fanoutAgent ? ` (${fanoutAgent})` : ""}`,
+      run: onSelectWinner,
+    });
+  }
+  useRegisterCommands(laneCommands, [runId, category, minimized, view, showCompose, canDelegate, nextCategory, !!onSelectWinner, laneTaskId, fanoutAgent]);
 
   // ── Minimized: chip status + token (run + akumulasi) + ringkas hasil ──
   if (minimized) {
@@ -165,6 +206,7 @@ export function ConsolePanel({
       <Card interactive onClick={() => setMinimized(false)} style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", padding: "var(--space-2) var(--space-3)" }}>
         <StatusDot status={dot(state.status)} pulse={busy} />
         <Badge tone="brand" mono>{category}</Badge>
+        {fanoutAgent && <Badge tone="neutral" mono>{fanoutAgent}</Badge>}
         <Meta style={{ whiteSpace: "nowrap" }}>
           {state.usage.total.toLocaleString()} tok · Σ {tokensAccumulated.toLocaleString()}
           {elapsedText ? ` · ⏱ ${elapsedText}` : ""}
@@ -183,12 +225,18 @@ export function ConsolePanel({
       <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)", padding: "var(--space-2) var(--space-3)", borderBottom: "1px solid var(--line)", background: "var(--panel-2)", flex: "none" }}>
         <StatusDot status={dot(state.status)} pulse={busy} />
         <Badge tone="brand" mono>{category}</Badge>
+        {fanoutAgent && <Badge tone="neutral" mono>{fanoutAgent}</Badge>}
         <Meta style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {state.status}{state.route && state.route !== "—" ? ` · → ${state.route}` : ""}
         </Meta>
         {!showCompose && (
           <Button variant="ghost" size="sm" onClick={() => setView((v) => (v === "result" ? "stream" : "result"))}>
             {view === "result" ? "Stream" : "Hasil"}
+          </Button>
+        )}
+        {showCompose && (
+          <Button variant="ghost" size="sm" onClick={openFanout} title="Jalankan lane ini di 2 agent serentak">
+            Fan-out
           </Button>
         )}
         {busy && <Button variant="danger" size="sm" onClick={actions.cancel}>Batal</Button>}
@@ -277,11 +325,19 @@ export function ConsolePanel({
       {/* Follow-up — refine di lane yang sama sebelum delegasi */}
       {terminal && <FollowUpStrip onSend={actions.followUp} />}
 
-      {/* Delegasi — aksi eksplisit ke lane berikutnya */}
-      {canDelegate && (
+      {/* Fan-out (Item C): pilih cabang ini sebagai pemenang → cabang lain dibuang.
+          Delegasi per-cabang disembunyikan; delegasi dilakukan setelah pemenang dipilih. */}
+      {onSelectWinner ? (
         <div style={{ padding: "var(--space-2) var(--space-3)", borderTop: "1px solid var(--line)", flex: "none", display: "flex", justifyContent: "flex-end" }}>
-          <Button variant="primary" size="sm" onClick={openDelegate}>Delegasikan ke {nextCategory} →</Button>
+          <Button variant="primary" size="sm" onClick={onSelectWinner}>Pilih sebagai pemenang ✓</Button>
         </div>
+      ) : (
+        /* Delegasi — aksi eksplisit ke lane berikutnya */
+        canDelegate && (
+          <div style={{ padding: "var(--space-2) var(--space-3)", borderTop: "1px solid var(--line)", flex: "none", display: "flex", justifyContent: "flex-end" }}>
+            <Button variant="primary" size="sm" onClick={openDelegate}>Delegasikan ke {nextCategory} →</Button>
+          </div>
+        )
       )}
     </Card>
   );

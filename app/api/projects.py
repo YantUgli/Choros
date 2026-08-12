@@ -2,11 +2,14 @@ from __future__ import annotations
 from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from sqlalchemy import desc, func, select, Integer
-from app.models import Project, TaskGroup, TaskRun, Task, TaskLog
+from app.models import Agent, Project, TaskGroup, TaskRun, Task, TaskLog
 from app.schemas import (
     ProjectIn, ProjectOut, TaskGroupIn, TaskGroupOut,
-    TaskRunOut, TaskRunDetailOut, RunLaneOut, TaskOut,
+    TaskRunOut, TaskRunDetailOut, RunLaneOut, TaskOut, FanoutIn,
 )
+from app.orchestrator import quota
+from app.orchestrator.isolation import is_git_repo
+from app.orchestrator.runner import runner
 from app.security import CurrentUser, DbSession
 
 router = APIRouter(prefix="/api", tags=["projects"])
@@ -124,48 +127,73 @@ async def get_run(id: int, user: CurrentUser, session: DbSession) -> TaskRunDeta
         
     group = await session.get(TaskGroup, run.task_group_id)
     lanes = []
-    
+
+    async def _tokens_run(task_id: int) -> int:
+        log = (await session.execute(
+            select(TaskLog)
+            .where(TaskLog.task_id == task_id)
+            .order_by(desc(TaskLog.id))
+            .limit(1)
+        )).scalar_one_or_none()
+        if log and log.usage and "total" in log.usage:
+            return log.usage["total"]
+        return 0
+
     for c in group.categories:
-        # Get latest task in this category
-        stmt_task = (select(Task)
+        # Semua task lane ini (terbaru dulu) — perlu dilihat utuh untuk deteksi fan-out.
+        all_tasks = list((await session.execute(
+            select(Task)
             .where(Task.task_run_id == id, Task.category == c)
             .order_by(desc(Task.id))
-            .limit(1)
-        )
-        task = (await session.execute(stmt_task)).scalar_one_or_none()
-        
-        task_id = None
-        status = None
-        tokens_run = 0
-        if task:
-            task_id = task.id
-            status = task.status
-            
-            # get tokens_run from latest task_log
-            stmt_log = (select(TaskLog)
-                .where(TaskLog.task_id == task_id)
-                .order_by(desc(TaskLog.id))
-                .limit(1)
-            )
-            log = (await session.execute(stmt_log)).scalar_one_or_none()
-            if log and log.usage and "total" in log.usage:
-                tokens_run = log.usage["total"]
-                
-        # accumulate all tokens for tasks with (task_run_id=id, category=c)
+        )).scalars())
+
+        primary = all_tasks[0] if all_tasks else None
+        branches_out = None
+
+        # Fan-out: task terbaru punya fanout_group_id. Kalau ≥2 cabang belum dibuang,
+        # lane belum punya pemenang → paparkan cabang (tanpa primary tunggal). Kalau
+        # sudah diputuskan (satu cabang tersisa), collapse ke pemenang itu.
+        if primary is not None and primary.fanout_group_id is not None:
+            gid = primary.fanout_group_id
+            group_tasks = [t for t in all_tasks if t.fanout_group_id == gid]
+            active = [t for t in group_tasks if t.status != "discarded"]
+            if len(active) >= 2:
+                primary = None
+                branches_out = []
+                for t in sorted(group_tasks, key=lambda x: x.id):
+                    agent_name = None
+                    if t.pinned_agent_id:
+                        ag = await session.get(Agent, t.pinned_agent_id)
+                        agent_name = ag.name if ag else None
+                    branches_out.append({
+                        "task_id": t.id,
+                        "status": t.status,
+                        "tokens_run": await _tokens_run(t.id),
+                        "agent": agent_name,
+                    })
+            elif active:
+                primary = active[0]
+
+        task_id = primary.id if primary else None
+        status = primary.status if primary else None
+        tokens_run = await _tokens_run(primary.id) if primary else 0
+
+        # akumulasi token seluruh task di lane (termasuk cabang yang dibuang — sudah terpakai)
         stmt_acc = (select(func.sum(TaskLog.usage["total"].astext.cast(Integer)))
             .join(Task, Task.id == TaskLog.task_id)
             .where(Task.task_run_id == id, Task.category == c)
         )
         tokens_accumulated = (await session.execute(stmt_acc)).scalar_one_or_none() or 0
-        
+
         lanes.append({
             "category": c,
             "task_id": task_id,
             "status": status,
             "tokens_run": tokens_run,
-            "tokens_accumulated": tokens_accumulated
+            "tokens_accumulated": tokens_accumulated,
+            "branches": branches_out,
         })
-        
+
     # Convert run to TaskRunDetailOut
     return TaskRunDetailOut(
         id=run.id,
@@ -191,3 +219,95 @@ async def list_lane_tasks(id: int, category: str, user: CurrentUser, session: Db
         .order_by(desc(Task.id))
     )
     return list((await session.execute(stmt)).scalars())
+
+
+@router.post(
+    "/task-runs/{id}/lanes/{category}/fanout",
+    response_model=list[TaskOut],
+    status_code=201,
+)
+async def fanout_lane(
+    id: int, category: str, payload: FanoutIn, user: CurrentUser, session: DbSession
+) -> list[Task]:
+    """Jalankan satu lane di 2 agent serentak → bandingkan → (nanti) pilih pemenang.
+
+    Keputusan produk: tepat 2 cabang (muat di cap konkurensi global 3) & selalu
+    autonomous, jadi tiap cabang dapat worktree terisolasi sendiri dan tak saling
+    menimpa folder live. Kedua cabang berbagi `fanout_group_id` (= id task jangkar).
+    """
+    run = await session.get(TaskRun, id)
+    if not run or run.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Task run not found")
+
+    group = await session.get(TaskGroup, run.task_group_id)
+    if not group or category not in group.categories:
+        raise HTTPException(status_code=400, detail=f"kategori '{category}' bukan bagian dari task ini")
+
+    agent_ids = payload.agent_ids
+    if len(agent_ids) != 2 or len(set(agent_ids)) != 2:
+        raise HTTPException(status_code=400, detail="fan-out butuh tepat 2 agent berbeda")
+
+    agents: list[Agent] = []
+    for aid in agent_ids:
+        agent = await session.get(Agent, aid)
+        if not agent or agent.user_id != user.id or not agent.is_active:
+            raise HTTPException(status_code=400, detail=f"agent {aid} tidak valid / bukan milik Anda")
+        agents.append(agent)
+
+    # Preflight kuota: fan-out membakar kuota 2×. Jujur menolak lebih dulu kalau agen
+    # terpilih sedang mentok — kecuali user eksplisit memaksa (force).
+    if not payload.force:
+        blocked: list[str] = []
+        for agent in agents:
+            exhausted, until = await quota.is_exhausted(
+                session, user_id=user.id, agent_id=agent.id, model=agent.default_model
+            )
+            if exhausted:
+                blocked.append(f"{agent.name} (reset {until:%H:%M %d/%m})" if until else agent.name)
+        if blocked:
+            raise HTTPException(
+                status_code=409,
+                detail=f"kuota mentok untuk: {'; '.join(blocked)}. Fan-out membakar kuota 2× — "
+                "set force=true untuk tetap lanjut.",
+            )
+
+    project = await session.get(Project, group.project_id)
+    project_path = project.folder_path if project else None
+
+    # Isolasi worktree butuh repo git. Cegah lebih dulu daripada men-spawn 2 task yang
+    # pasti halted (kecuali user eksplisit izinkan tanpa isolasi).
+    if project_path and not payload.allow_unisolated and not await is_git_repo(project_path):
+        raise HTTPException(
+            status_code=400,
+            detail="fan-out butuh repo git untuk isolasi worktree; jadikan repo git (`git init`) "
+            "atau set allow_unisolated bila memang disengaja",
+        )
+
+    tasks: list[Task] = []
+    for agent in agents:
+        task = Task(
+            user_id=user.id,
+            prompt=payload.prompt,
+            category=category,
+            mode="autonomous",  # fan-out = selalu worktree terisolasi
+            project_path=project_path,
+            quality_floor=payload.quality_floor,
+            allow_unisolated=payload.allow_unisolated,
+            task_run_id=id,
+            pinned_agent_id=agent.id,  # cabang ini memimpin dengan agent ini
+            status="queued",
+        )
+        session.add(task)
+        tasks.append(task)
+
+    await session.flush()  # dapatkan id sebelum menetapkan group
+    group_id = tasks[0].id
+    for task in tasks:
+        task.fanout_group_id = group_id
+    await session.commit()
+
+    for task in tasks:
+        await session.refresh(task)
+        runner.start(task.id)
+
+    return tasks
