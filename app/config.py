@@ -29,6 +29,14 @@ class Settings(BaseSettings):
     # batas konkurensi tugas berjalan bersamaan
     max_concurrent_tasks: int = 3
 
+    # Pra-index worktree ke store codebase-memory-mcp sebelum agent mulai, supaya
+    # panggilan MCP pertama si agent tidak balapan dengan autoindex cold di
+    # worktree segar (penyebab "tool gagal" transien). Best-effort & non-fatal.
+    memory_warmup_enabled: bool = True
+    memory_warmup_binary: str = "codebase-memory-mcp"  # nama di PATH atau path absolut
+    memory_warmup_mode: str = "fast"
+    memory_warmup_timeout: int = 90
+
     @property
     def sync_database_url(self) -> str:
         return self.database_url.replace("+asyncpg", "")

@@ -291,8 +291,35 @@ export function createSseDaemon(sink: DaemonSink, opts: SseDaemonOptions = {}): 
   let partialId: string | null = null;
   /** true selama pertanyaan agent menahan run — eof tidak boleh menutupnya. */
   let questionPending = false;
+  // Sambung-ulang setelah koneksi SSE putus SEMENTARA pada run yang belum selesai.
+  // EventSource yang kita tutup sendiri (closeStream) tidak auto-reconnect, jadi
+  // kalau tidak disambung ulang panel menggantung di "queued" sampai reload.
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let reconnectAttempts = 0;
+  const MAX_RECONNECT = 5;
+  // Polling REST untuk jalur ATTACH (lane hasil delegasi / run lama). EventSource
+  // ke task yang sedang/sudah berjalan terbukti tidak andal di browser (macet /
+  // datang sebagai kilatan), sementara fetch biasa selalu mulus — jadi lane
+  // di-attach lewat polling, bukan SSE. Submit (lane 0) tetap pakai SSE.
+  let pollTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const clearReconnect = () => {
+    if (reconnectTimer !== null) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+  };
+
+  const stopPolling = () => {
+    if (pollTimer !== null) {
+      clearTimeout(pollTimer);
+      pollTimer = null;
+    }
+  };
 
   const closeStream = () => {
+    clearReconnect();
+    stopPolling();
     es?.close();
     es = null;
   };
@@ -380,12 +407,79 @@ export function createSseDaemon(sink: DaemonSink, opts: SseDaemonOptions = {}): 
           `sesi tidak lagi aktif (status: ${task.status}) — proses berhenti tanpa menutup run. ` +
             "Mulai ulang atau kirim lanjutan.",
         );
+      } else if (taskId === id && reconnectAttempts < MAX_RECONNECT) {
+        // Koneksi putus SEMENTARA pada run yang masih berjalan (bukan eof). Kita
+        // sudah menutup EventSource sendiri, jadi ia tak akan menyambung otomatis
+        // — sambung ulang dengan backoff kecil. Kalau task keburu selesai, replay
+        // + eof di koneksi baru akan menyelesaikannya.
+        reconnectAttempts += 1;
+        clearReconnect();
+        reconnectTimer = setTimeout(() => {
+          reconnectTimer = null;
+          if (taskId === id) openStream(id);
+        }, 1000 * reconnectAttempts);
       }
-      // else: koneksi putus sementara pada run non-terminal → biarkan, EventSource
-      // atau reload berikutnya akan menyambung lagi.
+      // else: sudah pindah task / jatah retry habis → biarkan; reload menyambung.
     } catch (err) {
       fail(`gagal membaca status tugas: ${String(err)}`);
     }
+  };
+
+  /** Terapkan satu event kawat ke konsol (dipakai stream live & replay REST). */
+  const applyWire = (wire: WireEvent) => {
+    if (wire.type === "question") questionPending = true;
+    if (wire.type === "output" && wire.data.partial) {
+      if (partialId === null) partialId = eventId("p");
+    } else if (wire.type !== "usage") {
+      // `usage` menetes di tengah aliran output; ia tidak memutus blok teks
+      // yang sedang berjalan. Event lain menutupnya.
+      partialId = null;
+    }
+    for (const e of toConsoleEvents(wire, partialId)) {
+      sink(e);
+    }
+  };
+
+  /** Status task yang masih "hidup" — polling terus selama salah satu ini. */
+  const LIVE_STATUS = ["queued", "running", "waiting_for_input"];
+
+  /**
+   * ATTACH via polling REST (bukan SSE). Ambil event tersimpan tiap ~1,5 dtk,
+   * terapkan yang baru (seq > terakhir), dan berhenti begitu task terminal lalu
+   * rekonsiliasi ke hasil. Menangani task yang masih berjalan (near-live) maupun
+   * yang sudah selesai (satu putaran) dengan andal — tanpa EventSource yang rawan
+   * macet di jalur attach.
+   */
+  const attachLive = (id: number) => {
+    closeStream();
+    taskId = id;
+    partialId = null;
+    opts.onTaskId?.(id);
+    let lastSeq = 0;
+    const tick = async () => {
+      if (taskId !== id) return; // sudah pindah ke task lain
+      try {
+        const events = await json<Array<WireEvent & { seq?: number }>>(
+          await fetch(`${base}/api/tasks/${id}/events`),
+        );
+        for (const wire of events) {
+          const seq = wire.seq ?? 0;
+          if (seq <= lastSeq) continue;
+          lastSeq = seq;
+          applyWire(wire);
+        }
+        const task = await json<WireTaskOut>(await fetch(`${base}/api/tasks/${id}`));
+        if (!LIVE_STATUS.includes(task.status)) {
+          questionPending = false; // terminal → tak ada pertanyaan menggantung
+          await reconcile(id, true);
+          return; // berhenti polling
+        }
+      } catch {
+        // hiccup sementara — coba lagi di tick berikutnya
+      }
+      if (taskId === id) pollTimer = setTimeout(() => void tick(), 1500);
+    };
+    void tick();
   };
 
   const openStream = (id: number) => {
@@ -401,22 +495,15 @@ export function createSseDaemon(sink: DaemonSink, opts: SseDaemonOptions = {}): 
       } catch {
         return;
       }
+      // Stream sehat: nol-kan hitungan retry agar drop di kemudian hari tetap
+      // dapat jatah sambung-ulang penuh.
+      reconnectAttempts = 0;
       if (wire.type === "eof") {
         closeStream();
         void reconcile(id);
         return;
       }
-      if (wire.type === "question") questionPending = true;
-      if (wire.type === "output" && wire.data.partial) {
-        if (partialId === null) partialId = eventId("p");
-      } else if (wire.type !== "usage") {
-        // `usage` menetes di tengah aliran output; ia tidak memutus blok teks
-        // yang sedang berjalan. Event lain menutupnya.
-        partialId = null;
-      }
-      for (const e of toConsoleEvents(wire, partialId)) {
-        sink(e);
-      }
+      applyWire(wire);
     };
     source.onerror = () => {
       // EventSource menutup koneksi sendiri saat server selesai; hanya laporkan
@@ -447,7 +534,7 @@ export function createSseDaemon(sink: DaemonSink, opts: SseDaemonOptions = {}): 
 
   return {
     attach(id: number) {
-      openStream(id);
+      attachLive(id);
     },
     
     submit(request) {

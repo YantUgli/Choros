@@ -9,9 +9,14 @@ import { ConfirmModal } from "../components/modals/ConfirmModal";
 import { BrowseModal } from "../components/modals/BrowseModal";
 import { DelegateModal } from "../components/modals/DelegateModal";
 import { FanoutModal } from "../components/modals/FanoutModal";
+import {
+  RouteTargetModal,
+  type RouteTargetPreset,
+} from "../components/modals/RouteTargetModal";
 
 type ModalRequest =
   | { type: "agent"; preset: AgentPreset; onSave: (draft: AgentDraft) => void }
+  | { type: "routeTarget"; preset: RouteTargetPreset; onSave: (agentId: number) => void }
   | { type: "diff"; runId: number; onMerge: () => void }
   | { type: "confirm"; title: string; body: string; onConfirm: () => void }
   | { type: "browse"; initial: string; onPick: (path: string) => void }
@@ -20,6 +25,7 @@ type ModalRequest =
 
 interface ModalApi {
   openAgent: (preset: AgentPreset, onSave: (draft: AgentDraft) => void) => void;
+  openRouteTarget: (preset: RouteTargetPreset, onSave: (agentId: number) => void) => void;
   openDiff: (runId: number, onMerge: () => void) => void;
   openConfirm: (opts: { title: string; body: string; onConfirm: () => void }) => void;
   openBrowse: (initial: string, onPick: (path: string) => void) => void;
@@ -43,6 +49,7 @@ export function ModalProvider({ children }: { children: ReactNode }) {
   const api = useMemo<ModalApi>(
     () => ({
       openAgent: (preset, onSave) => setModal({ type: "agent", preset, onSave }),
+      openRouteTarget: (preset, onSave) => setModal({ type: "routeTarget", preset, onSave }),
       openDiff: (runId, onMerge) => setModal({ type: "diff", runId, onMerge }),
       openConfirm: (opts) => setModal({ type: "confirm", ...opts }),
       openBrowse: (initial, onPick) => setModal({ type: "browse", initial, onPick }),
@@ -61,6 +68,16 @@ export function ModalProvider({ children }: { children: ReactNode }) {
           preset={modal.preset}
           onSave={(draft) => {
             modal.onSave(draft);
+            close();
+          }}
+          onClose={close}
+        />
+      )}
+      {modal?.type === "routeTarget" && (
+        <RouteTargetModal
+          preset={modal.preset}
+          onSave={(agentId) => {
+            modal.onSave(agentId);
             close();
           }}
           onClose={close}

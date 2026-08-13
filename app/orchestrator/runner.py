@@ -36,6 +36,7 @@ from app.orchestrator.isolation import (
     cleanup_workspace,
     prepare_workspace,
 )
+from app.orchestrator.memory_warmup import warm_codebase_memory
 from app.orchestrator.quality import meets_floor
 from app.orchestrator.router import Target, resolve_targets
 
@@ -293,6 +294,12 @@ class TaskRunner:
                 task.workspace_path = workspace.path
                 await session.commit()
 
+        # Pra-index worktree agar panggilan MCP pertama agent tak balapan dengan
+        # autoindex cold (penyebab "tool gagal" transien). Best-effort & non-fatal.
+        warmup_note = await warm_codebase_memory(workspace.path)
+        if warmup_note:
+            await self._emit(task_id, Event.status(warmup_note, workspace=workspace.path))
+
         permission_mode = "autonomous" if mode == "autonomous" else "safe"
         ctx = RunContext(
             task_id=task_id,
@@ -546,8 +553,13 @@ class TaskRunner:
         final_output: str | None = None
         usage_total: dict[str, Any] = {}
 
+        # Agent tidak tahu dirinya diisolasi: cwd-nya worktree, bukan direktori user.
+        # Tanpa konteks ini ia menyuruh user "refresh IDE" untuk file yang cuma ada
+        # di worktree → hasil tampak seperti bug padahal hanya belum di-merge.
+        run_prompt = _isolation_preamble(workspace) + prompt if workspace.isolated else prompt
+
         stream = adapter.run(
-            prompt,
+            run_prompt,
             model=target.model,
             permission_mode=permission_mode,
             project_path=workspace.path,
@@ -704,6 +716,32 @@ class TaskRunner:
 
     def get_buffered_events(self, task_id: int) -> list[TaskEvent]:
         return list(self._event_buffer.get(task_id, []))
+
+
+def _isolation_preamble(workspace: Workspace) -> str:
+    """Konteks yang di-inject ke prompt agent saat berjalan di worktree terisolasi.
+
+    Tanpa ini agent menganggap cwd-nya = direktori proyek user, lalu menyuruh user
+    'refresh IDE' untuk melihat file yang sebenarnya hanya ada di worktree — bikin
+    hasil tampak seperti bug padahal cuma belum di-merge.
+    """
+    branch = workspace.branch or "(worktree bersama workflow)"
+    return (
+        "[KONTEKS ORCHESTRATOR — WAJIB DIPATUHI]\n"
+        "Kamu berjalan di dalam WORKTREE GIT TERISOLASI, BUKAN direktori kerja user.\n"
+        f"- Direktori kerjamu (cwd): {workspace.path}\n"
+        f"- Branch worktree: {branch}\n"
+        "Semua perubahan file yang kamu buat HANYA ada di worktree ini. Perubahan itu "
+        "TIDAK akan muncul di direktori proyek asli user sampai user me-review lalu "
+        "MERGE-nya lewat Choros.\n"
+        "Maka JANGAN PERNAH:\n"
+        "- menyuruh user 'refresh file explorer / reload IDE' untuk melihat hasil;\n"
+        "- menyuruh user menjalankan `ls` atau membuka file di direktori proyek mereka "
+        "sebagai bukti pekerjaan selesai — di sana file-nya memang belum ada.\n"
+        "Kalau perlu menyebut lokasi file, gunakan path worktree di atas apa adanya, dan "
+        "jelaskan bahwa hasil baru tampil di proyek setelah di-merge.\n"
+        "---\n\n"
+    )
 
 
 def _rebuild_prompt(prompt: str, plan_artifact: str | None) -> str:

@@ -5,8 +5,11 @@ import ctypes
 import ctypes.util
 import json
 import logging
+import re
 import sys
 import time
+from datetime import datetime, timedelta, timezone
+import os
 
 import httpx
 from fastapi import APIRouter
@@ -19,6 +22,15 @@ router = APIRouter(prefix="/api/quota", tags=["quota"])
 
 QUOTA_URL = "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+
+# Kredensial OAuth "Desktop app" milik antigravity CLI, tertanam di binary `agy`.
+# Bukan rahasia sejati (siapa pun bisa mengekstraknya dari binary) — hanya bisa
+# me-refresh token yang sudah diotorisasi user. Keyring agy cuma menyimpan `token`
+# (access/refresh/expiry), bukan client_id/secret, padahal grant refresh_token
+# Google WAJIB menyertakan keduanya. Tanpa ini refresh selalu 400 → "token_expired",
+# sehingga token hanya bisa diperbarui dengan menjalankan agy manual.
+AGY_CLIENT_ID = os.getenv("AGY_CLIENT_ID")
+AGY_CLIENT_SECRET = os.getenv("AGY_CLIENT_SECRET")
 
 
 def _platform_supported() -> bool:
@@ -40,6 +52,29 @@ _http_client: httpx.AsyncClient = httpx.AsyncClient(
 _cached_token: str | None = None
 # Refresh credentials — di-populate saat pertama baca keyring
 _cached_refresh_creds: dict | None = None
+# Waktu kedaluwarsa access token yang di-cache (tz-aware). None = tidak diketahui.
+_cached_expiry: datetime | None = None
+# Refresh sedikit sebelum benar-benar mati agar tak ada request yang kena 401.
+_EXPIRY_SKEW = timedelta(seconds=60)
+
+
+def _parse_expiry(raw: object) -> datetime | None:
+    """Parse `expiry` keyring agy. Pecahan detiknya 9 digit (nanodetik), jadi
+    dipangkas ke 6 digit dulu supaya diterima datetime.fromisoformat."""
+    if not isinstance(raw, str) or not raw:
+        return None
+    trimmed = re.sub(r"(\.\d{6})\d+", r"\1", raw)
+    try:
+        return datetime.fromisoformat(trimmed)
+    except ValueError:
+        return None
+
+
+def _token_expiring() -> bool:
+    """True kalau token cache sudah/hampir kedaluwarsa (dalam skew)."""
+    if _cached_expiry is None:
+        return False  # expiry tak diketahui → jangan refresh proaktif, andalkan 401
+    return datetime.now(timezone.utc) >= _cached_expiry - _EXPIRY_SKEW
 
 
 def _read_keyring_token_linux() -> str | None:
@@ -168,42 +203,59 @@ def _read_keyring_token() -> dict | None:
 
 
 async def _get_token() -> str | None:
-    """Kembalikan token dari cache, atau baca dari keyring di thread pool."""
-    global _cached_token, _cached_refresh_creds
-    if _cached_token:
+    """Kembalikan token dari cache, atau baca dari keyring di thread pool.
+
+    Kalau token cache mendekati expiry, refresh dulu secara proaktif supaya
+    request quota tidak pernah berangkat dengan token mati (menghindari 401).
+    """
+    global _cached_token, _cached_refresh_creds, _cached_expiry
+    if _cached_token and not _token_expiring():
         return _cached_token
+    if _cached_token and _token_expiring() and _cached_refresh_creds:
+        new_token = await _try_refresh()
+        if new_token:
+            _cached_token = new_token
+            return _cached_token
+        # refresh gagal → jatuh ke baca keyring (agy mungkin sudah menulis token baru)
     loop = asyncio.get_event_loop()
     token_data = await loop.run_in_executor(None, _read_keyring_token)
     if not token_data:
-        return None
+        return _cached_token  # pertahankan token lama kalau keyring tak terbaca
     _cached_token = token_data.get("access_token")
-    log.warning("[gemini-keyring] keys in token: %s", list(token_data.keys()))
+    _cached_expiry = _parse_expiry(token_data.get("expiry"))
     if token_data.get("refresh_token"):
+        # client_id/secret tidak ada di keyring → pakai kredensial agy (lihat atas).
         _cached_refresh_creds = {
             "refresh_token": token_data["refresh_token"],
-            "client_id": token_data.get("client_id", ""),
-            "client_secret": token_data.get("client_secret", ""),
+            "client_id": token_data.get("client_id") or AGY_CLIENT_ID,
+            "client_secret": token_data.get("client_secret") or AGY_CLIENT_SECRET,
         }
     return _cached_token
 
 
 async def _try_refresh() -> str | None:
     """Tukar refresh_token jadi access_token baru. Return None kalau tidak bisa."""
+    global _cached_expiry
     if not _cached_refresh_creds or not _cached_refresh_creds.get("refresh_token"):
         log.warning("[gemini-refresh] skip — refresh_token tidak ada di keyring")
         return None
-    has_client_id = bool(_cached_refresh_creds.get("client_id"))
-    has_client_secret = bool(_cached_refresh_creds.get("client_secret"))
-    log.warning("[gemini-refresh] mencoba refresh | has_client_id=%s has_client_secret=%s", has_client_id, has_client_secret)
     try:
         resp = await _http_client.post(
             GOOGLE_TOKEN_URL,
             data=_cached_refresh_creds | {"grant_type": "refresh_token"},
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
-        log.warning("[gemini-refresh] status=%d body=%s", resp.status_code, resp.text[:200])
         if resp.is_success:
-            return resp.json().get("access_token")
+            data = resp.json()
+            expires_in = data.get("expires_in")
+            _cached_expiry = (
+                datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
+                if expires_in
+                else None
+            )
+            return data.get("access_token")
+        # jangan log body saat sukses (berisi access_token); saat gagal aman.
+        log.warning("[gemini-refresh] gagal status=%d error=%s", resp.status_code, resp.text[:200])
     except Exception as exc:
         log.warning("[gemini-refresh] exception: %s", exc)
     return None

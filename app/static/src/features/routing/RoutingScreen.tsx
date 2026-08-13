@@ -13,7 +13,6 @@ import {
   RouteTarget,
   updateRoutingRule,
 } from "../../services/routingApi";
-import { fetchAgents, type WireAgentFull } from "../../services/agentApi";
 
 function move<T>(list: T[], from: number, to: number): T[] {
   if (to < 0 || to >= list.length || from === to) return list;
@@ -91,37 +90,18 @@ export function RoutingScreen() {
     }
   };
 
-  const editTarget = async (t: RouteTarget, index: number) => {
-    let agents: WireAgentFull[];
-    try {
-      agents = await fetchAgents();
-    } catch (e: any) {
-      setErrorMsg(e.message || String(e));
-      return;
-    }
-    modals.openAgent(
-      {
-        title: `Ubah target ${index + 1}`,
-        name: t.agent,
-        adapter: t.adapter,
-        // Kosong berarti "ikut default agent". Mengisi t.model (teresolusi)
-        // di sini akan memaku model warisan ke DB begitu draft disimpan.
-        model: t.originalModel,
-        active: true,
-      },
-      async (draft) => {
+  // Ubah target = pilih ulang agent dari daftar. Model selalu ikut default agent
+  // (model: null) — tak ada override per-target, jadi tak ada string yang bisa salah.
+  const editTarget = (t: RouteTarget, index: number) => {
+    modals.openRouteTarget(
+      { title: `Ubah target ${index + 1}`, agentId: t.agentId },
+      async (agentId) => {
         setErrorMsg(null);
         try {
-          let agentId = t.agentId;
-          const matchingAgent = agents.find(a => a.name === draft.name);
-          if (matchingAgent) {
-            agentId = matchingAgent.id;
-          }
-
           await updateRoutingRule(t.id, {
             category: cat,
             agent_id: agentId,
-            model: draft.model || null,
+            model: null,
             priority: index + 1,
           });
           reloadData();
@@ -132,29 +112,14 @@ export function RoutingScreen() {
     );
   };
 
-  const addTarget = async () => {
-    let agents: WireAgentFull[];
-    try {
-      agents = await fetchAgents();
-    } catch (e: any) {
-      setErrorMsg(e.message || String(e));
-      return;
-    }
-    modals.openAgent({ title: `Tambah target — ${cat}` }, async (draft) => {
+  const addTarget = () => {
+    modals.openRouteTarget({ title: `Tambah target — ${cat}` }, async (agentId) => {
       setErrorMsg(null);
       try {
-        let agentId = 0;
-        const matchingAgent = agents.find(a => a.name === draft.name);
-        if (matchingAgent) {
-          agentId = matchingAgent.id;
-        } else {
-          throw new Error("Agent tidak ditemukan");
-        }
-        
         await createRoutingRule({
           category: cat,
           agent_id: agentId,
-          model: draft.model || null,
+          model: null,
           priority: targets.length + 1,
         });
         reloadData();
@@ -356,7 +321,7 @@ export function RoutingScreen() {
                 + tambah target
               </Button>
               <span style={{ fontSize: "var(--fs-12)", color: "var(--muted)" }}>
-                drag ⠿ untuk mengurut (Alt+↑/↓ dari keyboard) · klik baris untuk ubah agent/model
+                drag ⠿ untuk mengurut (Alt+↑/↓ dari keyboard) · klik baris untuk ubah agent
               </span>
             </div>
           </div>

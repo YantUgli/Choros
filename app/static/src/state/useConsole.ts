@@ -59,7 +59,8 @@ export function useConsole() {
 
   const attach = useCallback((taskId: number) => {
     // ATTACH memindahkan mesin dari idle → queued lebih dulu, kalau tidak semua
-    // event stream yang di-replay akan diabaikan (idle hanya menerima SUBMIT).
+    // event yang di-replay akan diabaikan (idle hanya menerima SUBMIT). Daemon
+    // menyambung via polling REST (andal untuk lane berjalan maupun selesai).
     dispatch({ type: "ATTACH", runId: taskId, ts: nowTs() });
     daemonRef.current?.attach(taskId);
   }, []);

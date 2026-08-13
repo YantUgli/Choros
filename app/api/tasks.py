@@ -176,6 +176,7 @@ async def reply_to_task(
         plan_artifact=parent.plan_artifact,
         allow_unisolated=parent.allow_unisolated,
         parent_task_id=parent.id,
+        task_run_id=parent.task_run_id,
         resume_session_id=parent.last_session_id,
         pinned_agent_id=last_log.agent_id if last_log else None,
         status="queued",

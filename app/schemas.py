@@ -78,6 +78,7 @@ class TaskOut(BaseModel):
     status: str
     project_path: str | None
     workspace_path: str | None
+    allow_unisolated: bool = False
     quality_floor: str | None
     final_output: str | None
     workflow_run_id: int | None = None

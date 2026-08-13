@@ -45,6 +45,7 @@ export function toAttemptRows(logs: WireTaskLog[], agents: WireAgent[]): Attempt
 }
 
 import { apiGet, apiSend, API_BASE } from "./api";
+import type { RunRequest } from "../state/types";
 
 let cachedAgents: WireAgent[] | null = null;
 
@@ -63,6 +64,28 @@ export async function fetchAttempts(taskId: number, base = API_BASE): Promise<At
 
 export async function fetchDiff(taskId: number): Promise<{ diff?: string; status?: string }> {
   return apiGet<{ diff?: string; status?: string }>(`/api/tasks/${taskId}/diff`);
+}
+
+interface WireTask {
+  prompt: string;
+  category: string;
+  mode: string;
+  project_path: string | null;
+  allow_unisolated?: boolean;
+  quality_floor: string | null;
+}
+
+/** Ambil detail task lalu bentuk RunRequest siap di-submit ulang (run segar). */
+export async function fetchTaskRequest(taskId: number): Promise<RunRequest> {
+  const t = await apiGet<WireTask>(`/api/tasks/${taskId}`);
+  return {
+    prompt: t.prompt,
+    category: t.category as RunRequest["category"],
+    mode: t.mode === "autonomous" ? "otonom" : "interaktif",
+    projectPath: t.project_path ?? "",
+    qualityFloor: t.quality_floor,
+    noIsolation: Boolean(t.allow_unisolated),
+  };
 }
 
 export async function mergeDiff(taskId: number): Promise<void> {

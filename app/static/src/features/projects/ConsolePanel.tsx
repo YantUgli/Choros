@@ -11,7 +11,14 @@ import { FollowUpStrip } from "../console/FollowUpStrip";
 import { Markdown } from "../../components/Markdown";
 import { useModals } from "../../state/modals";
 import { delegate, fanoutLane, fetchLaneTasks, type LaneTask } from "../../services/projectApi";
+import { mergeDiff, discardDiff, fetchTaskRequest } from "../../services/taskApi";
 import { BUSY_STATUSES, TERMINAL_STATUSES, type TaskCategory } from "../../state/types";
+
+/** Branch worktree dari path isolasi: `.../worktrees/task-66` → `choros/task-66`. */
+function branchFromWorktree(path: string): string | null {
+  const base = path.split("/").filter(Boolean).pop() ?? "";
+  return /^task-\d+$/.test(base) ? `choros/${base}` : null;
+}
 
 /** Durasi ringkas dari milidetik: `m ss` atau `Xj Ym`. */
 function fmtElapsed(ms: number): string {
@@ -66,11 +73,15 @@ export function ConsolePanel({
   const [composePrompt, setComposePrompt] = useState("");
   const [tokenLimit, setTokenLimit] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const [reviewed, setReviewed] = useState(false);
 
   // Lane hasil delegasi dibuat di server → sambungkan stream tanpa submit.
   // Hanya untuk panel yang masih SEGAR (belum punya sesi sendiri): kalau panel ini
   // yang men-submit (lane 0), state.status sudah bukan idle → jangan attach lagi,
   // supaya refetch/poll tidak me-reset stream yang sedang berjalan.
+  // Lane hasil delegasi / run lama: attach lewat polling REST (daemon.attach).
+  // Polling menangani lane yang masih berjalan (near-live) maupun sudah selesai,
+  // jadi tak perlu bercabang atau self-heal — ia berhenti sendiri saat terminal.
   const attachedRef = useRef(false);
   useEffect(() => {
     if (laneTaskId !== null && !attachedRef.current && state.status === "idle" && !state.runId) {
@@ -83,7 +94,76 @@ export function ConsolePanel({
   const terminal = TERMINAL_STATUSES.includes(state.status);
   const currentTaskId = state.runId || laneTaskId;
   const showCompose = laneTaskId === null && state.status === "idle";
+
+  // Bug "sukses palsu": agent bisa lapor selesai walau ada tool yang gagal (mis.
+  // verifikasi/test gagal karena worktree tak punya dependency). Hitung tool gagal
+  // dari stream → tandai lane "done" yang sebenarnya menyimpan kegagalan.
+  const failedTools = state.stream.filter(
+    (s) => s.kind === "tool_call" && s.text.includes("✗"),
+  ).length;
   const canDelegate = state.status === "done" && nextCategory !== null && !!currentTaskId;
+
+  // Worktree review (mode otonom terisolasi): file hidup di worktree, belum masuk
+  // proyek user sampai di-merge. Surface diff / merge / buang di sini — tanpa ini
+  // user melihat "done" tapi direktori proyeknya kosong (terlihat seperti bug).
+  const wt = state.result;
+  const showWorktree = terminal && !!wt?.isolated && !!wt.worktree && !!currentTaskId && !reviewed;
+  const afterReview = () => {
+    setReviewed(true);
+    onDelegated();
+  };
+  const openDiff = () => {
+    if (currentTaskId) modals.openDiff(currentTaskId, afterReview);
+  };
+  const doMerge = () => {
+    if (!currentTaskId) return;
+    modals.openConfirm({
+      title: "Merge ke proyek",
+      body: "Commit perubahan di worktree lalu merge branch ke direktori proyek utama?",
+      onConfirm: async () => {
+        try {
+          await mergeDiff(currentTaskId);
+          afterReview();
+        } catch (err) {
+          modals.openConfirm({ title: "Gagal merge", body: String(err), onConfirm: () => {} });
+        }
+      },
+    });
+  };
+  const doDiscard = () => {
+    if (!currentTaskId) return;
+    modals.openConfirm({
+      title: "Buang perubahan",
+      body: "Buang worktree ini beserta semua perubahannya tanpa merge?",
+      onConfirm: async () => {
+        try {
+          await discardDiff(currentTaskId);
+          afterReview();
+        } catch (err) {
+          modals.openConfirm({ title: "Gagal discard", body: String(err), onConfirm: () => {} });
+        }
+      },
+    });
+  };
+
+  // Recovery halted/error: run ULANG segar (sesi baru), bukan resume. Follow-up
+  // (/reply) butuh sesi sukses — mustahil kalau semua target gagal. SUBMIT sudah
+  // transisi sah dari halted/error, jadi ini menyalakan run baru di lane yang sama.
+  const [rerunning, setRerunning] = useState(false);
+  const rerun = async () => {
+    if (rerunning) return;
+    setRerunning(true);
+    try {
+      // Lane-0 masih memegang request-nya; lane yang di-attach ambil dari server.
+      const base = state.request ?? (currentTaskId ? await fetchTaskRequest(currentTaskId) : null);
+      if (!base) throw new Error("prompt tugas tidak ditemukan");
+      actions.submit({ ...base, projectPath: folderPath || base.projectPath, taskRunId: runId });
+    } catch (err) {
+      modals.openConfirm({ title: "Gagal menjalankan ulang", body: String(err), onConfirm: () => {} });
+    } finally {
+      setRerunning(false);
+    }
+  };
 
   // Elapsed hidup: tick per detik hanya selama run berjalan (hemat saat idle/terminal).
   useEffect(() => {
@@ -207,6 +287,8 @@ export function ConsolePanel({
         <StatusDot status={dot(state.status)} pulse={busy} />
         <Badge tone="brand" mono>{category}</Badge>
         {fanoutAgent && <Badge tone="neutral" mono>{fanoutAgent}</Badge>}
+        {failedTools > 0 && <Badge tone="warn" mono title="Ada tool yang gagal">⚠ {failedTools}</Badge>}
+        {showWorktree && <Badge tone="brand" mono title="Perubahan di worktree menunggu review/merge">⎇ review</Badge>}
         <Meta style={{ whiteSpace: "nowrap" }}>
           {state.usage.total.toLocaleString()} tok · Σ {tokensAccumulated.toLocaleString()}
           {elapsedText ? ` · ⏱ ${elapsedText}` : ""}
@@ -226,6 +308,11 @@ export function ConsolePanel({
         <StatusDot status={dot(state.status)} pulse={busy} />
         <Badge tone="brand" mono>{category}</Badge>
         {fanoutAgent && <Badge tone="neutral" mono>{fanoutAgent}</Badge>}
+        {failedTools > 0 && (
+          <Badge tone="warn" mono title="Agent menandai selesai walau ada tool yang gagal — periksa hasilnya">
+            ⚠ {failedTools} tool gagal
+          </Badge>
+        )}
         <Meta style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {state.status}{state.route && state.route !== "—" ? ` · → ${state.route}` : ""}
         </Meta>
@@ -264,6 +351,11 @@ export function ConsolePanel({
               <Meta>{state.usage.total.toLocaleString()} tok</Meta>
             )}
           </div>
+          {wt?.isolated && wt.worktree && (
+            <span title={`worktree terisolasi — ${wt.worktree}`} style={{ maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              <Meta>⎇ {branchFromWorktree(wt.worktree) ?? "worktree"} · {wt.worktree}</Meta>
+            </span>
+          )}
         </div>
       )}
 
@@ -322,8 +414,42 @@ export function ConsolePanel({
         <CascadePanel runId={currentTaskId} attempts={state.attempts} status={state.status} />
       )}
 
-      {/* Follow-up — refine di lane yang sama sebelum delegasi */}
-      {terminal && <FollowUpStrip onSend={actions.followUp} />}
+      {/* Worktree review — file otonom hidup di worktree; belum masuk proyek user
+          sampai di-merge. Tanpa strip ini "done" tampak seperti bug (proyek kosong). */}
+      {showWorktree && (
+        <div style={{ padding: "var(--space-2) var(--space-3)", borderTop: "1px solid var(--line)", background: "var(--panel)", flex: "none", display: "flex", alignItems: "center", gap: "var(--space-2)", flexWrap: "wrap" }}>
+          <Label strong={false}>Worktree review</Label>
+          <Badge tone="neutral" mono title={wt!.worktree}>⎇ {branchFromWorktree(wt!.worktree) ?? "worktree"}</Badge>
+          <Meta style={{ whiteSpace: "nowrap" }}>
+            +{wt!.added} −{wt!.removed} · {wt!.filesChanged} file · belum masuk proyek
+          </Meta>
+          <div style={{ marginLeft: "auto", display: "flex", gap: "var(--space-2)" }}>
+            <Button variant="ghost" size="sm" onClick={openDiff}>Lihat diff</Button>
+            <Button variant="secondary" size="sm" onClick={doMerge}>Merge ke proyek</Button>
+            <Button variant="danger" size="sm" onClick={doDiscard}>Buang</Button>
+          </div>
+        </div>
+      )}
+
+      {/* Follow-up — refine di sesi yang sama; hanya sah saat run SUKSES (butuh sesi). */}
+      {state.status === "done" && <FollowUpStrip onSend={actions.followUp} />}
+
+      {/* Recovery halted/error — run ulang segar. Follow-up TIDAK dipakai di sini
+          karena tak ada sesi yang bisa di-resume (semua target gagal / rantai habis). */}
+      {(state.status === "halted" || state.status === "error") && (
+        <div style={{ padding: "var(--space-2) var(--space-3)", borderTop: "1px solid var(--line)", background: "var(--panel)", flex: "none", display: "flex", alignItems: "center", gap: "var(--space-2)", flexWrap: "wrap" }}>
+          <StatusDot status={state.status === "halted" ? "limit" : "error"} />
+          <Meta style={{ flex: 1, minWidth: 0 }}>
+            {state.status === "halted"
+              ? state.halt?.message ?? "Semua target habis/gagal — plan tersimpan."
+              : state.failure?.message ?? "Kegagalan non-recoverable."}
+            {" — perbaiki route/kredensial lalu jalankan ulang."}
+          </Meta>
+          <Button variant="primary" size="sm" onClick={rerun} disabled={rerunning}>
+            {rerunning ? "Menyiapkan…" : "Jalankan ulang"}
+          </Button>
+        </div>
+      )}
 
       {/* Fan-out (Item C): pilih cabang ini sebagai pemenang → cabang lain dibuang.
           Delegasi per-cabang disembunyikan; delegasi dilakukan setelah pemenang dipilih. */}

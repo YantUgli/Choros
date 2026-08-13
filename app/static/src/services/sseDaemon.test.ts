@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { countdownTo, toConsoleEvents } from "./sseDaemon";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { countdownTo, createSseDaemon, toConsoleEvents } from "./sseDaemon";
 import { consoleReducer, initialConsoleState } from "../state/consoleMachine";
 import type { ConsoleState } from "../state/types";
 
@@ -211,6 +211,104 @@ describe("pemetaan event kawat → state machine", () => {
 
   it("eof tidak menghasilkan event apa pun (rekonsiliasi lewat GET task)", () => {
     expect(toConsoleEvents(wire("eof", {}), null)).toEqual([]);
+  });
+});
+
+describe("sseDaemon attach (polling REST) & submit (SSE)", () => {
+  class MockEventSource {
+    static instances: MockEventSource[] = [];
+    url: string;
+    onmessage: ((e: { data: string }) => void) | null = null;
+    onerror: (() => void) | null = null;
+    closed = false;
+    constructor(url: string) {
+      this.url = url;
+      MockEventSource.instances.push(this);
+    }
+    close() {
+      this.closed = true;
+    }
+  }
+
+  const req = {
+    prompt: "p",
+    category: "coding_complex" as const,
+    mode: "interaktif" as const,
+    projectPath: "",
+    qualityFloor: null,
+    noIsolation: false,
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    MockEventSource.instances = [];
+    (globalThis as unknown as { EventSource: unknown }).EventSource = MockEventSource;
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("attach memuat task selesai via polling REST tanpa membuka EventSource", async () => {
+    const collected: string[] = [];
+    (globalThis as unknown as { fetch: unknown }).fetch = vi.fn(async (url: string) => ({
+      ok: true,
+      json: async () =>
+        String(url).endsWith("/events")
+          ? [
+              { seq: 1, type: "status", agent: null, model: null, ts: 0, data: { message: "mulai" } },
+              { seq: 2, type: "usage", agent: "a", model: "x", ts: 0, data: { total_tokens: 42 } },
+            ]
+          : { id: 65, status: "ok", mode: "interaktif" },
+    }));
+    const daemon = createSseDaemon((e) => collected.push(e.type));
+    daemon.attach(65);
+    await vi.advanceTimersByTimeAsync(50);
+
+    expect(MockEventSource.instances).toHaveLength(0); // murni REST, tanpa SSE
+    expect(collected).toContain("FINAL"); // reconcile menutup ke hasil final
+  });
+
+  it("attach terus polling task berjalan, lalu berhenti saat terminal", async () => {
+    let status = "running";
+    const fetchMock = vi.fn(async (url: string) => ({
+      ok: true,
+      json: async () =>
+        String(url).endsWith("/events")
+          ? [{ seq: 1, type: "status", agent: null, model: null, ts: 0, data: { message: "x" } }]
+          : { id: 65, status, mode: "interaktif" },
+    }));
+    (globalThis as unknown as { fetch: unknown }).fetch = fetchMock;
+    const daemon = createSseDaemon(() => {});
+    daemon.attach(65);
+    await vi.advanceTimersByTimeAsync(50); // tick #1 (running) → jadwalkan lagi
+    const afterFirst = fetchMock.mock.calls.length;
+
+    status = "ok";
+    await vi.advanceTimersByTimeAsync(1600); // tick #2 (ok) → berhenti
+    const afterStop = fetchMock.mock.calls.length;
+    expect(afterStop).toBeGreaterThan(afterFirst); // sempat polling lagi
+
+    await vi.advanceTimersByTimeAsync(5000); // tak boleh ada tick lagi
+    expect(fetchMock.mock.calls.length).toBe(afterStop);
+    expect(MockEventSource.instances).toHaveLength(0);
+  });
+
+  it("submit memakai SSE dan menyambung ulang saat koneksi putus sementara", async () => {
+    (globalThis as unknown as { fetch: unknown }).fetch = vi.fn(async (url: string) => ({
+      ok: true,
+      json: async () =>
+        String(url).endsWith("/api/tasks") ? { id: 62 } : { id: 62, status: "running" },
+    }));
+    const daemon = createSseDaemon(() => {});
+    daemon.submit(req, 0);
+    await vi.advanceTimersByTimeAsync(0); // POST selesai → openStream
+    expect(MockEventSource.instances).toHaveLength(1);
+
+    MockEventSource.instances[0]!.onerror?.(); // drop sementara (bukan eof)
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(MockEventSource.instances).toHaveLength(2); // tersambung ulang
+    expect(MockEventSource.instances[1]!.url).toContain("/api/tasks/62/stream");
   });
 });
 
