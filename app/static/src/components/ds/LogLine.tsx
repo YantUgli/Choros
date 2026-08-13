@@ -32,7 +32,9 @@ export function LogLine({ ts, level = "info", source, children, style }: LogLine
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "68px 3px auto 1fr",
+        // Kolom sumber (tag + model) DIBATASI: nama model panjang tidak boleh
+        // menyita kolom pesan sampai teks jawaban terjepit jadi satu huruf/baris.
+        gridTemplateColumns: "68px 3px minmax(0, 190px) minmax(0, 1fr)",
         gap: "var(--space-2)",
         alignItems: "baseline",
         fontFamily: "var(--font-mono)",
@@ -51,7 +53,21 @@ export function LogLine({ ts, level = "info", source, children, style }: LogLine
           opacity: level === "info" ? 0.25 : 0.9,
         }}
       />
-      {source ? <span style={{ color: "var(--muted)" }}>{source}</span> : <span />}
+      {source ? (
+        <span
+          title={source}
+          style={{
+            color: "var(--muted)",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {source}
+        </span>
+      ) : (
+        <span />
+      )}
       <span
         style={{
           color: level === "info" ? "var(--text)" : c,

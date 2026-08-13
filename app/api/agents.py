@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from sqlalchemy import select
 
+from app.adapters.model_catalog import get_models
 from app.adapters.registry import ADAPTERS, describe_adapters
 from app.models import Agent, RoutingRule
 from app.orchestrator.router import CATEGORIES
@@ -15,6 +16,19 @@ router = APIRouter(prefix="/api", tags=["agents"])
 @router.get("/adapters")
 async def list_adapter_types() -> list[dict]:
     return describe_adapters()
+
+
+@router.get("/adapters/{adapter_type}/models")
+async def list_adapter_models(
+    adapter_type: str, user: CurrentUser, refresh: bool = False
+) -> dict:
+    """Model yang tersedia untuk sebuah adapter, ditanyakan live ke CLI-nya.
+
+    Lambat pada panggilan pertama (agy menembak jaringan); hasilnya di-cache.
+    """
+    if adapter_type not in ADAPTERS:
+        raise HTTPException(status_code=404, detail=f"adapter_type tidak dikenal: {adapter_type}")
+    return await get_models(adapter_type, refresh=refresh)
 
 
 @router.get("/agents", response_model=list[AgentOut])

@@ -135,6 +135,20 @@ class BaseCliAdapter:
     def env_overrides(self) -> dict[str, str]:
         return {}
 
+    # ---------- daftar model (hook subclass) ----------
+
+    #: batas waktu detik untuk perintah list-model. agy menariknya dari jaringan
+    #: sehingga butuh window lebih longgar (lihat AntigravityAdapter).
+    list_models_timeout: float = 45.0
+
+    def list_models_command(self) -> list[str] | None:
+        """argv untuk menanyakan daftar model ke CLI, atau None kalau tak didukung."""
+        return None
+
+    def parse_models(self, stdout: str) -> list[str]:
+        """Ubah stdout perintah list-model jadi daftar id model."""
+        return []
+
     def build_env(self) -> dict[str, str]:
         """Environment untuk subprocess harness.
 
@@ -164,6 +178,18 @@ class BaseCliAdapter:
 
     def is_installed(self) -> bool:
         return bool(self.binary) and shutil.which(self.binary) is not None
+
+    def _resolve_exe(self, cmd: list[str]) -> list[str]:
+        """Ganti argv[0] dengan path lengkapnya.
+
+        Di Windows, create_subprocess_exec hanya otomatis menambah `.exe`; shim
+        `.CMD`/`.ps1` (mis. opencode dari npm) gagal diluncurkan dari nama telanjang.
+        shutil.which menyelesaikannya lewat PATHEXT.
+        """
+        if not cmd:
+            return cmd
+        exe = shutil.which(cmd[0])
+        return [exe, *cmd[1:]] if exe else cmd
 
     async def cancel(self) -> None:
         proc = self._proc
@@ -196,12 +222,14 @@ class BaseCliAdapter:
             )
             return
 
-        cmd = self.build_command(
-            prompt,
-            model=model,
-            permission_mode=permission_mode,
-            project_path=project_path,
-            resume_session_id=resume_session_id,
+        cmd = self._resolve_exe(
+            self.build_command(
+                prompt,
+                model=model,
+                permission_mode=permission_mode,
+                project_path=project_path,
+                resume_session_id=resume_session_id,
+            )
         )
         env = self.build_env()
         stderr_chunks: list[str] = []
@@ -295,6 +323,42 @@ class BaseCliAdapter:
             kind = classify_failure_text(stderr_text)
             if kind:
                 yield Event.error(kind, stderr_text[-2000:], agent=self.name, model=model)
+
+    async def list_models(self) -> list[str]:
+        """Tanyakan daftar model ke CLI. Kembalikan [] pada kegagalan apa pun.
+
+        Sengaja tidak melempar: pemanggil (endpoint /adapters/*/models) memakai
+        daftar fallback statis kalau ini kosong, jadi UI tetap jalan meski CLI
+        belum terpasang, belum login, atau lambat.
+        """
+        cmd = self.list_models_command()
+        if not cmd or not self.is_installed():
+            return []
+        cmd = self._resolve_exe(cmd)
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=self.build_env(),
+                limit=4 * 1024 * 1024,
+            )
+        except (NotImplementedError, OSError):
+            return []
+        try:
+            async with asyncio.timeout(self.list_models_timeout):
+                out, _err = await proc.communicate()
+        except (TimeoutError, asyncio.CancelledError):
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
+            return []
+        if proc.returncode not in (0, None):
+            return []
+        try:
+            return self.parse_models(out.decode("utf-8", "replace"))
+        except Exception:
+            return []
 
 
 def loads_or_none(line: str) -> Any | None:

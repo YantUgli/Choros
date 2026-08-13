@@ -82,6 +82,15 @@ class OpenCodeAdapter(BaseCliAdapter):
                 env[key] = value
         return env
 
+    # ---------- daftar model ----------
+
+    def list_models_command(self) -> list[str]:
+        # `opencode models` mencetak satu id model per baris (mis. "opencode/big-pickle").
+        return [self.binary, "models"]
+
+    def parse_models(self, stdout: str) -> list[str]:
+        return [line.strip() for line in stdout.splitlines() if line.strip()]
+
     # ---------- parsing ----------
 
     def parse_line(self, line: str) -> list[Event]:

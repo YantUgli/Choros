@@ -10,17 +10,33 @@ export function ProjectsScreen({ onOpen }: { onOpen: (project: Project) => void 
   const [res, reload] = useApiResource(fetchProjects);
   const [name, setName] = useState("");
   const [folder, setFolder] = useState("");
+  const [error, setError] = useState<string | null>(null);
   const modals = useModals();
 
+  const nameMissing = !name.trim();
+  const folderMissing = !folder.trim();
+
   const handleCreate = async () => {
-    if (!name || !folder) return;
+    // Validasi eksplisit — dulu diam-diam `return` sehingga klik "Buat" tanpa
+    // isian tidak memberi umpan balik apa pun.
+    if (nameMissing || folderMissing) {
+      setError(
+        nameMissing && folderMissing
+          ? "Isi nama project dan folder path dulu."
+          : nameMissing
+          ? "Nama project belum diisi."
+          : "Folder path belum diisi.",
+      );
+      return;
+    }
+    setError(null);
     try {
-      await createProject(name, folder);
+      await createProject(name.trim(), folder.trim());
       setName("");
       setFolder("");
       reload();
     } catch (err: any) {
-      alert("Failed to create project: " + err.message);
+      setError("Gagal membuat project: " + (err?.message ?? String(err)));
     }
   };
 
@@ -46,11 +62,24 @@ export function ProjectsScreen({ onOpen }: { onOpen: (project: Project) => void 
           <Label>Project Baru</Label>
           <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "flex-end" }}>
             <Field label="Nama Project" style={{ flex: 1 }}>
-              <Input value={name} onChange={(e: any) => setName(e.target.value)} placeholder="Contoh: Web App" />
+              <Input
+                value={name}
+                onChange={(e: any) => { setName(e.target.value); if (error) setError(null); }}
+                placeholder="Contoh: Web App"
+                invalid={error !== null && nameMissing}
+                aria-invalid={error !== null && nameMissing}
+              />
             </Field>
             <Field label="Folder Path" style={{ flex: 2 }}>
               <div style={{ display: "flex", gap: "var(--space-2)" }}>
-                <Input value={folder} onChange={(e: any) => setFolder(e.target.value)} placeholder="/path/to/folder" style={{ flex: 1 }} />
+                <Input
+                  value={folder}
+                  onChange={(e: any) => { setFolder(e.target.value); if (error) setError(null); }}
+                  placeholder="/path/to/folder"
+                  style={{ flex: 1 }}
+                  invalid={error !== null && folderMissing}
+                  aria-invalid={error !== null && folderMissing}
+                />
                 <Button variant="secondary" onClick={() => modals.openBrowse(folder || "/", setFolder)}>
                   Browse...
                 </Button>
@@ -58,6 +87,9 @@ export function ProjectsScreen({ onOpen }: { onOpen: (project: Project) => void 
             </Field>
             <Button onClick={handleCreate}>+ Buat</Button>
           </div>
+          {error && (
+            <span role="alert"><Meta style={{ color: "var(--error)" }}>{error}</Meta></span>
+          )}
         </div>
       </Panel>
 

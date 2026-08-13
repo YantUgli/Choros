@@ -51,6 +51,24 @@ def build_adapter(
     )
 
 
+def build_bare_adapter(adapter_type: str, *, home: str | None = None) -> AgentAdapter:
+    """Adapter tanpa Agent DB — cukup untuk operasi bebas-konteks seperti list_models."""
+    cls = ADAPTERS.get(adapter_type)
+    if cls is None:
+        raise UnknownAdapterError(
+            f"adapter_type '{adapter_type}' tidak dikenal; pilihan: {sorted(ADAPTERS)}"
+        )
+    settings = get_settings()
+    return cls(
+        name=adapter_type,
+        config={},
+        default_model=None,
+        base_url=None,
+        timeout=settings.run_timeout,
+        home=home,
+    )
+
+
 def adapter_can_execute(adapter_type: str) -> bool:
     return adapter_type in ADAPTERS_WITH_HANDS
 

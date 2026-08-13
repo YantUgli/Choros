@@ -305,8 +305,12 @@ export function createSseDaemon(sink: DaemonSink, opts: SseDaemonOptions = {}): 
     });
   };
 
-  /** Saat stream habis: tanyakan status sebenarnya ke backend, jangan menebak. */
-  const reconcile = async (id: number) => {
+  /**
+   * Saat stream habis: tanyakan status sebenarnya ke backend, jangan menebak.
+   * `streamEnded` = server mengirim eof (runner PASTI tidak lagi menjalankan task);
+   * false = koneksi putus (mungkin sementara) → jangan bunuh run non-terminal.
+   */
+  const reconcile = async (id: number, streamEnded = true) => {
     if (questionPending) return; // menunggu jawaban user — bukan akhir run
     try {
       const task = await json<WireTaskOut>(await fetch(`${base}/api/tasks/${id}`));
@@ -360,7 +364,25 @@ export function createSseDaemon(sink: DaemonSink, opts: SseDaemonOptions = {}): 
         });
       } else if (task.status === "error") {
         fail("run berakhir dengan error — lihat log di atas");
+      } else if (task.status === "cancelled") {
+        sink({ type: "CANCEL", ts: nowTs() });
+      } else if (task.status === "interrupted") {
+        // Ditandai `recover_interrupted_tasks` saat server/orchestrator restart.
+        // Tanpa cabang ini, attach menggantung selamanya di "menyambung…".
+        fail(
+          "sesi terputus — server/orchestrator sempat restart sebelum run selesai. " +
+            "Mulai ulang tugas ini untuk melanjutkan (plan tersimpan).",
+        );
+      } else if (streamEnded) {
+        // queued/running/waiting_for_input tapi stream sudah eof → runner tidak
+        // lagi hidup untuk task ini. Jangan biarkan konsol menggantung.
+        fail(
+          `sesi tidak lagi aktif (status: ${task.status}) — proses berhenti tanpa menutup run. ` +
+            "Mulai ulang atau kirim lanjutan.",
+        );
       }
+      // else: koneksi putus sementara pada run non-terminal → biarkan, EventSource
+      // atau reload berikutnya akan menyambung lagi.
     } catch (err) {
       fail(`gagal membaca status tugas: ${String(err)}`);
     }
@@ -401,7 +423,7 @@ export function createSseDaemon(sink: DaemonSink, opts: SseDaemonOptions = {}): 
       // kalau memang belum sempat menerima eof.
       if (es !== source) return;
       closeStream();
-      void reconcile(id);
+      void reconcile(id, false);
     };
   };
 

@@ -38,6 +38,26 @@ class AntigravityAdapter(BaseCliAdapter):
     adapter_type = "antigravity"
     binary = "agy"
 
+    # `agy models` menariknya dari jaringan; sekali panggil bisa ~1 menit.
+    list_models_timeout = 120.0
+
+    # ---------- daftar model ----------
+
+    def list_models_command(self) -> list[str]:
+        return [self.binary, "models"]
+
+    def parse_models(self, stdout: str) -> list[str]:
+        # Format tiap baris: "<model-id>\t<nama tampilan>". Baris "Fetching..." dilewati.
+        models: list[str] = []
+        for raw in stdout.splitlines():
+            line = raw.strip()
+            if not line or line.lower().startswith("fetching"):
+                continue
+            model_id = re.split(r"[\t ]", line, maxsplit=1)[0].strip()
+            if model_id:
+                models.append(model_id)
+        return models
+
     # ---------- trust ----------
 
     async def ensure_trusted(self, project_path: str) -> None:

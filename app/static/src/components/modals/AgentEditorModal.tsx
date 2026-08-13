@@ -3,7 +3,7 @@ import { Badge, Button, Input, Select, Toggle } from "../ds";
 import { Field } from "../Label";
 import { Modal } from "../Modal";
 import { ADAPTERS } from "../../data/katalogModel";
-import { fetchAdapters } from "../../services/agentApi";
+import { fetchAdapters, fetchAdapterModels } from "../../services/agentApi";
 import { useApiResource } from "../../state/useApiResource";
 
 export interface AgentDraft {
@@ -25,8 +25,8 @@ export interface AgentPreset {
 
 /**
  * Editor agent / target routing.
- * Model default WAJIB dipilih dari Select yang bergantung adapter — ganti adapter,
- * daftar model ikut berubah. Tidak ada input teks bebas untuk model (hindari typo).
+ * Daftar model ditarik live dari CLI adapter (`/api/adapters/{type}/models`), dengan
+ * katalog statis sebagai placeholder/fallback. Model kosong = "ikut default agent".
  */
 export function AgentEditorModal({
   preset,
@@ -38,33 +38,82 @@ export function AgentEditorModal({
   onClose: () => void;
 }) {
   const [res] = useApiResource(fetchAdapters);
-  
+
   const adapters = res.phase === "ready" ? res.data : [];
-  const adapterList = adapters.map(a => a.adapter_type);
-  
-  const initialAdapter = preset.adapter && adapterList.includes(preset.adapter) ? preset.adapter : (adapterList[0] || "claude_code");
-  const initialModels = ADAPTERS[initialAdapter] ?? [];
+  const adapterList = adapters.map((a) => a.adapter_type);
+
+  // Penting: adapter awal diambil langsung dari preset, TIDAK bergantung pada
+  // adapterList yang masih kosong saat render pertama. Dulu bug-nya di sini —
+  // sebelum /api/adapters balik, adapter jatuh ke "claude_code" lalu nyangkut,
+  // sehingga target Antigravity/opencode selalu tampil claude/sonnet.
   const [draft, setDraft] = useState<AgentDraft>({
     name: preset.name ?? "",
-    adapter: initialAdapter,
-    model:
-      preset.model && initialModels.includes(preset.model) ? preset.model : (initialModels[0] ?? ""),
+    adapter: preset.adapter ?? "",
+    model: preset.model ?? "",
     active: preset.active !== false,
     tokenLimit: preset.tokenLimit ?? null,
   });
 
-  // Sinkronisasi draft.adapter setelah adapters termuat jika preset.adapter tidak ada / tidak valid
+  const [models, setModels] = useState<string[]>(
+    preset.adapter ? (ADAPTERS[preset.adapter] ?? []) : [],
+  );
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [modelsSource, setModelsSource] = useState<"cli" | "fallback" | "unknown" | null>(null);
+
+  // Selaraskan adapter setelah daftar adapter termuat: pertahankan preset.adapter
+  // kalau valid, selain itu jatuh ke adapter pertama.
   useEffect(() => {
-    if (res.phase === "ready" && adapterList.length > 0 && !adapterList.includes(draft.adapter)) {
-      const nextAdapter = adapterList[0]!;
-      const nextModels = ADAPTERS[nextAdapter] ?? [];
-      setDraft(prev => ({ ...prev, adapter: nextAdapter, model: nextModels[0] ?? "" }));
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (res.phase !== "ready" || adapterList.length === 0) return;
+    setDraft((prev) => {
+      if (prev.adapter && adapterList.includes(prev.adapter)) return prev;
+      return { ...prev, adapter: adapterList[0]!, model: "" };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [res.phase]);
 
-  const models = ADAPTERS[draft.adapter] ?? [];
+  // Tarik daftar model live setiap kali adapter berubah. Placeholder statis tampil
+  // dulu supaya tidak ada jeda kosong (query agy bisa lambat).
+  useEffect(() => {
+    const adapter = draft.adapter;
+    if (!adapter) return;
+    let cancelled = false;
+    const staticList = ADAPTERS[adapter] ?? [];
+    setModels(staticList);
+    setModelsSource(null);
+    setModelsLoading(true);
+    fetchAdapterModels(adapter)
+      .then((r) => {
+        if (cancelled) return;
+        const list = r.models.length ? r.models : staticList;
+        setModels(list);
+        setModelsSource(r.source);
+        setDraft((prev) => {
+          if (prev.adapter !== adapter) return prev;
+          if (!prev.model) return prev; // kosong = ikut default agent
+          if (list.includes(prev.model)) return prev; // masih valid
+          if (prev.model === preset.model) return prev; // model tersimpan → pertahankan
+          return { ...prev, model: "" };
+        });
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setModels(staticList);
+          setModelsSource(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setModelsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft.adapter]);
+
   const currentAdapterInfo = adapters.find((a) => a.adapter_type === draft.adapter);
+  // Model tersimpan yang tidak ada di daftar live tetap ditampilkan agar tidak hilang.
+  const optionModels =
+    draft.model && !models.includes(draft.model) ? [draft.model, ...models] : models;
 
   return (
     <Modal title={preset.title} width={460} onClose={onClose}>
@@ -96,11 +145,7 @@ export function AgentEditorModal({
               size="md"
               style={{ width: "100%" }}
               value={draft.adapter}
-              onChange={(e) => {
-                const adapter = e.target.value;
-                const next = ADAPTERS[adapter] ?? [];
-                setDraft({ ...draft, adapter, model: next[0] ?? "" });
-              }}
+              onChange={(e) => setDraft({ ...draft, adapter: e.target.value, model: "" })}
               disabled={res.phase !== "ready"}
             >
               {adapterList.map((a) => (
@@ -108,7 +153,9 @@ export function AgentEditorModal({
                   {a}
                 </option>
               ))}
-              {adapterList.length === 0 && <option value={draft.adapter}>{draft.adapter}</option>}
+              {adapterList.length === 0 && draft.adapter && (
+                <option value={draft.adapter}>{draft.adapter}</option>
+              )}
             </Select>
           </Field>
           <Field label="Model default">
@@ -117,9 +164,9 @@ export function AgentEditorModal({
               style={{ width: "100%" }}
               value={draft.model}
               onChange={(e) => setDraft({ ...draft, model: e.target.value })}
-              disabled={models.length === 0}
             >
-              {models.map((m) => (
+              <option value="">(ikut default agent)</option>
+              {optionModels.map((m) => (
                 <option key={m} value={m}>
                   {m}
                 </option>
@@ -140,12 +187,18 @@ export function AgentEditorModal({
             lineHeight: 1.55,
             display: "flex",
             flexDirection: "column",
-            gap: 4
+            gap: 4,
           }}
         >
           <div>
-            model tersedia untuk <span style={{ color: "var(--text)" }}>{draft.adapter}</span>:{" "}
-            {models.join(", ") || "—"}
+            model tersedia untuk <span style={{ color: "var(--text)" }}>{draft.adapter || "—"}</span>:{" "}
+            {modelsLoading ? "memuat dari CLI…" : models.join(", ") || "—"}
+            {!modelsLoading && modelsSource === "cli" && (
+              <span style={{ color: "var(--ok, var(--brand))" }}> · live CLI</span>
+            )}
+            {!modelsLoading && modelsSource === "fallback" && (
+              <span style={{ color: "var(--limit)" }}> · daftar statis (CLI tak menjawab)</span>
+            )}
           </div>
           {currentAdapterInfo && (
             <div style={{ display: "flex", gap: "var(--space-2)", marginTop: 4 }}>

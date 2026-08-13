@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { type Project, fetchRunDetail, selectWinner, type RunLane, type TaskRunDetail } from "../../services/projectApi";
 import { Badge, Card, IconButton, StatusDot } from "../../components/ds";
 import { Label, Meta } from "../../components/Label";
@@ -39,6 +39,11 @@ export function RunWorkspace({
   const [detail, setDetail] = useState<TaskRunDetail | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
+  // Kontainer lane menggulir horizontal → lane yang baru aktif (hasil delegasi)
+  // sering muncul di luar layar kanan; tanpa ini delegasi terasa "tidak terjadi apa-apa".
+  const lanesRef = useRef<HTMLDivElement>(null);
+  const activeCatsRef = useRef<Set<string> | null>(null);
+
   const reload = useCallback(() => {
     fetchRunDetail(runId).then((d) => { setDetail(d); setErr(null); }).catch((e) => setErr(String(e)));
   }, [runId]);
@@ -48,6 +53,21 @@ export function RunWorkspace({
     const id = setInterval(reload, 4000);
     return () => clearInterval(id);
   }, [reload]);
+
+  // Saat sebuah lane berpindah dari "menunggu" → aktif (punya task), bawa ke layar.
+  useEffect(() => {
+    if (!detail) return;
+    const active = new Set(detail.lanes.filter((l) => l.taskId !== null || l.branches).map((l) => l.category));
+    const prev = activeCatsRef.current;
+    activeCatsRef.current = active;
+    if (prev === null) return; // muat pertama — jangan lompat
+    const newly = [...active].filter((c) => !prev.has(c));
+    const cat = newly[newly.length - 1];
+    if (!cat) return;
+    lanesRef.current
+      ?.querySelector<HTMLElement>(`[data-lane="${CSS.escape(cat)}"]`)
+      ?.scrollIntoView({ behavior: "smooth", inline: "end", block: "nearest" });
+  }, [detail]);
 
   if (!detail) {
     return (
@@ -80,6 +100,7 @@ export function RunWorkspace({
         </div>
 
         <div
+          ref={lanesRef}
           style={{
             flex: 1, minHeight: 0, display: "flex", gap: "var(--space-3)",
             overflowX: "auto", overflowY: "hidden", padding: "var(--space-3)",
@@ -91,7 +112,7 @@ export function RunWorkspace({
             // Fan-out belum diputuskan → cabang-cabang berdampingan + tombol pilih pemenang.
             if (lane.branches && lane.branches.length >= 2) {
               return (
-                <div key={lane.category} style={{ width: 960, minWidth: 900, flex: "1 0 900px", display: "flex", gap: "var(--space-3)", minHeight: 0 }}>
+                <div key={lane.category} data-lane={lane.category} style={{ width: 960, minWidth: 900, flex: "1 0 900px", display: "flex", gap: "var(--space-3)", minHeight: 0 }}>
                   {lane.branches.map((b) => (
                     <div key={b.taskId} style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", minHeight: 0 }}>
                       <ConsolePanel
@@ -114,7 +135,7 @@ export function RunWorkspace({
             const isActive = i === 0 || lane.taskId !== null;
 
             return (
-              <div key={lane.category} style={{ width: 540, minWidth: 480, flex: "1 0 480px", display: "flex", flexDirection: "column", minHeight: 0 }}>
+              <div key={lane.category} data-lane={lane.category} style={{ width: 540, minWidth: 480, flex: "1 0 480px", display: "flex", flexDirection: "column", minHeight: 0 }}>
                 {isActive ? (
                   <ConsolePanel
                     runId={runId}

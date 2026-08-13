@@ -58,3 +58,15 @@ export async function deleteAgent(id: number): Promise<void> {
 export async function fetchAdapters(): Promise<WireAdapterInfo[]> {
   return apiGet<WireAdapterInfo[]>("/api/adapters");
 }
+
+export interface WireAdapterModels {
+  adapter_type: string;
+  models: string[];
+  /** "cli" = dari CLI live · "fallback" = daftar statis · "unknown" = adapter tak dikenal */
+  source: "cli" | "fallback" | "unknown";
+  cached: boolean;
+}
+
+export async function fetchAdapterModels(adapterType: string): Promise<WireAdapterModels> {
+  return apiGet<WireAdapterModels>(`/api/adapters/${encodeURIComponent(adapterType)}/models`);
+}

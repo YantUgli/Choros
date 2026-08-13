@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -76,6 +77,15 @@ class ClaudeCodeAdapter(BaseCliAdapter):
             cmd += ["--add-dir", extra]
         return cmd
 
+    # ---------- daftar model ----------
+
+    def list_models_command(self) -> list[str]:
+        # `claude --print /model` mencetak baris "... Available: a, b, c, ...".
+        return [self.binary, "--print", "/model"]
+
+    def parse_models(self, stdout: str) -> list[str]:
+        return _parse_claude_models(stdout)
+
     # ---------- parsing stream-json ----------
 
     def parse_line(self, line: str) -> list[Event]:
@@ -83,6 +93,20 @@ class ClaudeCodeAdapter(BaseCliAdapter):
         if payload is None:
             return [Event.output(line)]
         return _parse_claude_payload(payload, self)
+
+
+def _parse_claude_models(stdout: str) -> list[str]:
+    marker = "Available:"
+    for line in stdout.splitlines():
+        idx = line.find(marker)
+        if idx == -1:
+            continue
+        tail = line[idx + len(marker):]
+        # buang klausa penutup "..., or a full model ID." dan titik akhir
+        tail = re.sub(r",?\s*or a full model ID\.?\s*$", "", tail.strip())
+        models = [tok.strip().rstrip(".") for tok in tail.split(",")]
+        return [m for m in models if m]
+    return []
 
 
 def _parse_claude_payload(payload: dict[str, Any], adapter: BaseCliAdapter) -> list[Event]:

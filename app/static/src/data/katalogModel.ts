@@ -1,10 +1,11 @@
 /**
- * Katalog model statis yang dirawat tangan, bukan data runtime.
- * Daftar model yang tersedia untuk sebuah langganan memang tidak bisa ditanyakan ke
- * CLI mana pun secara andal.
+ * Katalog model FALLBACK/placeholder. Sumber utama sekarang live dari CLI lewat
+ * `GET /api/adapters/{type}/models` (lihat AgentEditorModal). Daftar di sini hanya
+ * dipakai sebagai tampilan sementara saat query CLI belum balik, atau kalau
+ * endpoint-nya sama sekali tak terjangkau.
  */
 export const ADAPTERS: Record<string, string[]> = {
-  claude_code: ["sonnet", "opus-4", "haiku"],
+  claude_code: ["sonnet", "opus", "haiku", "default"],
   antigravity: ["default"],
   opencode: [
     "groq/llama-3.3-70b",

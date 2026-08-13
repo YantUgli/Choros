@@ -159,10 +159,16 @@ export function StreamView({
   const visible = pinnedId ? shown.filter((e) => e.id !== pinnedId) : shown;
   const buffered = frozenLen === null ? 0 : state.stream.length - frozenLen;
 
+  // Sinyal isi: bukan hanya JUMLAH baris. Output yang menetes (LOG_DELTA) menyatu
+  // ke baris yang sama → panjang array tak berubah, tapi tinggi konten bertambah.
+  // Tanpa memantau total teks, auto-scroll diam saat jawaban sedang di-stream dan
+  // user terpaksa menekan "jump to latest" berulang.
+  const contentLen = visible.reduce((sum, e) => sum + e.text.length, 0);
+
   useLayoutEffect(() => {
     if (!state.autoScroll || state.paused) return;
     bottomRef.current?.scrollIntoView({ block: "end" });
-  }, [visible.length, state.autoScroll, state.paused]);
+  }, [visible.length, contentLen, state.autoScroll, state.paused]);
 
   const onScroll = () => {
     const el = scrollRef.current;

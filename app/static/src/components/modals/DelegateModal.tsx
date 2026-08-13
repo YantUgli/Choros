@@ -19,6 +19,7 @@ export function DelegateModal({
   const [selected, setSelected] = useState<string>("_final");
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchArtifactCandidates(taskId)
@@ -27,7 +28,12 @@ export function DelegateModal({
         setText(res.finalOutput || "");
         setLoading(false);
       })
-      .catch(() => setLoading(false));
+      .catch((err) => {
+        // Dulu error ini ditelan diam-diam → modal kosong, tombol non-aktif,
+        // tanpa penjelasan. Sekarang ditampilkan.
+        setLoadError(err?.message ? String(err.message) : String(err));
+        setLoading(false);
+      });
   }, [taskId]);
 
   const select = (val: string) => {
@@ -47,6 +53,15 @@ export function DelegateModal({
       <div style={{ padding: "var(--space-4)", display: "flex", flexDirection: "column", gap: "var(--space-4)" }}>
         {loading ? (
           <Meta>Memuat artefak…</Meta>
+        ) : loadError ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-3)" }}>
+            <span role="alert">
+              <Meta style={{ color: "var(--error)" }}>Gagal memuat artefak: {loadError}</Meta>
+            </span>
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <Button variant="ghost" onClick={onClose}>Tutup</Button>
+            </div>
+          </div>
         ) : (
           <>
             <div style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}>
@@ -85,11 +100,17 @@ export function DelegateModal({
               />
             </div>
 
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: "var(--space-2)" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "var(--space-2)" }}>
+              {!text.trim() && (
+                <Meta style={{ marginRight: "auto", color: "var(--warn)" }}>
+                  Tidak ada artefak — tulis/pilih konteks dulu sebelum delegasi.
+                </Meta>
+              )}
               <Button variant="ghost" onClick={onClose}>Batal</Button>
               <Button
                 variant="secondary"
                 onClick={() => onDelegate(candidates?.finalOutput || text)}
+                disabled={!(candidates?.finalOutput || text).trim()}
                 title="Kirim output akhir apa adanya"
               >
                 Execute tanpa edit
